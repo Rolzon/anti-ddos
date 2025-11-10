@@ -4,6 +4,8 @@
 
 Sistema completo de protección Anti-DDoS diseñado específicamente para proteger servidores con Pterodactyl y bases de datos.
 
+**✅ Compatible con Docker/Pterodactyl** - Usa `iptables-nft` para no interferir con los puertos dinámicos de Pterodactyl.
+
 ## ✨ Características Principales
 
 ### 1. **Filtrado Dinámico por País (GeoIP)**
@@ -59,23 +61,38 @@ Sistema completo de protección Anti-DDoS diseñado específicamente para proteg
 
 ## 🚀 Instalación Rápida
 
-### 1. Transferir archivos al servidor
+### 1. Clonar repositorio
 
 ```bash
 # En tu servidor Ubuntu 22.04
 cd /opt
-# Sube los archivos del proyecto aquí
+sudo git clone https://github.com/Rolzon/anti-ddos.git
+cd anti-ddos
 ```
 
-### 2. Ejecutar instalación
+### 2. Configurar compatibilidad con Docker/Pterodactyl
+
+**⚠️ IMPORTANTE: Si usas Pterodactyl, ejecuta esto PRIMERO:**
 
 ```bash
-cd /opt/anti-ddos
+sudo chmod +x scripts/setup-nft-compatibility.sh
+sudo ./scripts/setup-nft-compatibility.sh
+```
+
+Este script:
+- ✅ Configura `iptables-nft` (compatible con Docker)
+- ✅ Limpia `iptables-legacy` (que causa conflictos)
+- ✅ Reinicia Docker y Wings
+- ✅ Asegura que los puertos de Pterodactyl funcionen
+
+### 3. Ejecutar instalación
+
+```bash
 chmod +x install.sh
 sudo ./install.sh
 ```
 
-### 3. Configuración Inicial CRÍTICA
+### 4. Configuración Inicial CRÍTICA
 
 **⚠️ IMPORTANTE: Antes de iniciar los servicios, agrega tu IP a la lista blanca para no bloquearte:**
 
