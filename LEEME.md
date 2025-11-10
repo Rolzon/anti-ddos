@@ -174,6 +174,19 @@ sudo netfilter-persistent save
 
 **Ver guía completa:** `docs/OPEN_PORTS.md`
 
+#### ⚠️ Problema: Múltiples Servidores con IP Compartida
+
+Si varios servidores comparten la misma IP pública y no pueden conectarse a MySQL:
+
+```bash
+# Ejecutar script de solución
+sudo /opt/anti-ddos/scripts/fix-mysql-shared-ip.sh
+```
+
+Este problema ocurre cuando múltiples servidores internos usan NAT y comparten una IP pública. El script elimina los límites de conexión para tu IP específica.
+
+**Ver guía completa:** `docs/MYSQL_SHARED_IP.md`
+
 ### Proteger Panel Pterodactyl
 
 ```bash
