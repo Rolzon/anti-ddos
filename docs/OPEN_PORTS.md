@@ -21,12 +21,18 @@ Este script:
 - ✅ Aplica límites de conexión (10 por IP)
 - ✅ Configura rate limiting (10/segundo)
 - ✅ Protege contra SYN flood
+- ✅ **Permite acceso desde la IP pública del servidor (190.57.138.18)**
 - ✅ Permite acceso desde IPs en whitelist
 - ✅ Guarda las reglas automáticamente
+
+**Nota:** El script ya incluye la IP pública del servidor para permitir conexiones locales usando la IP pública.
 
 ### Método 2: Manual con iptables
 
 ```bash
+# Permitir desde la IP pública del servidor (IMPORTANTE)
+sudo iptables -I ANTIDDOS -s 190.57.138.18 -p tcp --dport 3306 -j ACCEPT
+
 # Permitir conexiones establecidas
 sudo iptables -I ANTIDDOS -p tcp --dport 3306 -m state --state ESTABLISHED,RELATED -j ACCEPT
 
@@ -38,6 +44,7 @@ sudo iptables -I ANTIDDOS -p tcp --dport 3306 --syn -m limit --limit 10/s --limi
 
 # Permitir desde localhost
 sudo iptables -I ANTIDDOS -s 127.0.0.1 -p tcp --dport 3306 -j ACCEPT
+sudo iptables -I ANTIDDOS -s ::1 -p tcp --dport 3306 -j ACCEPT
 
 # Guardar reglas
 sudo netfilter-persistent save

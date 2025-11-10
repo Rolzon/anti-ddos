@@ -58,6 +58,11 @@ echo -e "${GREEN}✓ Protecciones aplicadas${NC}"
 
 echo -e "${YELLOW}[3/4] Configurando IPs de confianza...${NC}"
 
+# Permitir IP pública del servidor (para conexiones locales)
+SERVER_PUBLIC_IP="190.57.138.18"
+iptables -I ANTIDDOS -s "$SERVER_PUBLIC_IP" -p tcp --dport 3306 -j ACCEPT
+echo -e "${GREEN}  ✓ Permitido desde IP pública del servidor: $SERVER_PUBLIC_IP${NC}"
+
 # Leer IPs de la whitelist si existe
 if [ -f /etc/antiddos/whitelist.txt ]; then
     while IFS= read -r ip; do

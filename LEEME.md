@@ -150,11 +150,15 @@ Este script automáticamente:
 - ✅ Aplica límites de conexión (10 por IP)
 - ✅ Configura rate limiting
 - ✅ Protege contra SYN flood
+- ✅ **Permite acceso desde la IP pública del servidor (190.57.138.18)**
 - ✅ Permite acceso desde whitelist
 
 **Opción 2: Manual**
 
 ```bash
+# Permitir desde la IP pública del servidor
+sudo iptables -I ANTIDDOS -s 190.57.138.18 -p tcp --dport 3306 -j ACCEPT
+
 # Limitar conexiones por IP
 sudo iptables -I ANTIDDOS -p tcp --dport 3306 -m connlimit --connlimit-above 10 -j REJECT
 

@@ -181,3 +181,13 @@ advanced:
     - 22    # SSH
     - 80    # HTTP
     - 443   # HTTPS
+  
+  # MySQL specific configuration
+  mysql:
+    port: 3306
+    # Allow connections from server's public IP (for local services)
+    allow_server_public_ip: true
+    server_public_ip: "190.57.138.18"
+    # Connection limits
+    max_connections_per_ip: 10
+    rate_limit: "10/s"
