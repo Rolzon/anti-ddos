@@ -176,14 +176,21 @@ sudo netfilter-persistent save
 
 #### ⚠️ Problema: Múltiples Servidores con IP Compartida
 
-Si varios servidores comparten la misma IP pública y no pueden conectarse a MySQL:
+Si varios servidores comparten la misma IP pública y no pueden conectarse a MySQL/MariaDB:
 
+**Opción 1: Desbloqueo Completo (Recomendado)**
 ```bash
-# Ejecutar script de solución
+# Desbloquear completamente MariaDB/MySQL para tu IP
+sudo /opt/anti-ddos/scripts/unlock-mariadb-for-ip.sh
+```
+
+**Opción 2: Configuración con Límites Flexibles**
+```bash
+# Eliminar límites pero mantener protección básica
 sudo /opt/anti-ddos/scripts/fix-mysql-shared-ip.sh
 ```
 
-Este problema ocurre cuando múltiples servidores internos usan NAT y comparten una IP pública. El script elimina los límites de conexión para tu IP específica.
+Este problema ocurre cuando múltiples servidores internos usan NAT y comparten una IP pública. Los scripts eliminan los límites de conexión para tu IP específica (190.57.138.18).
 
 **Ver guía completa:** `docs/MYSQL_SHARED_IP.md`
 
