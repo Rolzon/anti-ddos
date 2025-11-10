@@ -196,13 +196,35 @@ Este problema ocurre cuando múltiples servidores internos usan NAT y comparten 
 
 ### Proteger Panel Pterodactyl
 
+#### ⚠️ Problema: Pterodactyl no puede iniciar servidores
+
+Si ves errores como "iptables failed" o "Error response from daemon: failed to set up container networking":
+
+```bash
+# Ejecutar script de corrección
+sudo /opt/anti-ddos/scripts/fix-pterodactyl-docker.sh
+
+# Reiniciar servicios
+sudo systemctl restart docker
+sudo systemctl restart wings
+```
+
+Este script permite:
+- ✅ Tráfico de interfaz docker0
+- ✅ Redes internas de Docker (172.x.x.x, 10.x.x.x)
+- ✅ Puerto 8080 (Wings)
+- ✅ Puerto 2022 (SFTP)
+- ✅ Puertos de servidores (25565-25665)
+
+#### Configuración Manual
+
 ```bash
 # Agregar IP del panel a lista blanca
 sudo antiddos-cli whitelist add IP_DEL_PANEL
 
 # Limitar conexiones HTTP/HTTPS
-sudo iptables -I ANTIDDOS -p tcp --dport 80 -m limit --limit 100/s --limit-burst 200 -j ACCEPT
-sudo iptables -I ANTIDDOS -p tcp --dport 443 -m limit --limit 100/s --limit-burst 200 -j ACCEPT
+sudo iptables-legacy -I ANTIDDOS -p tcp --dport 80 -m limit --limit 100/s --limit-burst 200 -j ACCEPT
+sudo iptables-legacy -I ANTIDDOS -p tcp --dport 443 -m limit --limit 100/s --limit-burst 200 -j ACCEPT
 
 # Guardar reglas
 sudo netfilter-persistent save
