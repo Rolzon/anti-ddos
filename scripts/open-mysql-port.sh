@@ -4,8 +4,6 @@
 # Este script configura reglas de iptables para permitir conexiones MySQL
 # mientras mantiene protección contra ataques
 
-set -e
-
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -21,8 +19,24 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+# Detectar si usa iptables-legacy o iptables-nft
+echo -e "${YELLOW}Detectando sistema de firewall...${NC}"
+if command -v iptables-legacy &> /dev/null; then
+    # Probar iptables-legacy primero
+    if iptables-legacy -L -n &>/dev/null 2>&1; then
+        IPTABLES="iptables-legacy"
+        echo -e "${GREEN}✓ Usando iptables-legacy${NC}"
+    else
+        IPTABLES="iptables"
+        echo -e "${GREEN}✓ Usando iptables${NC}"
+    fi
+else
+    IPTABLES="iptables"
+    echo -e "${GREEN}✓ Usando iptables${NC}"
+fi
+
 # Verificar que la cadena ANTIDDOS existe
-if ! iptables -L ANTIDDOS -n &>/dev/null; then
+if ! $IPTABLES -L ANTIDDOS -n &>/dev/null; then
     echo -e "${RED}Error: La cadena ANTIDDOS no existe${NC}"
     echo "Ejecuta primero: sudo systemctl start antiddos-monitor"
     exit 1
@@ -31,28 +45,28 @@ fi
 echo -e "${YELLOW}[1/4] Configurando acceso al puerto 3306...${NC}"
 
 # Permitir conexiones establecidas
-iptables -I ANTIDDOS -p tcp --dport 3306 -m state --state ESTABLISHED,RELATED -j ACCEPT
+$IPTABLES -I ANTIDDOS -p tcp --dport 3306 -m state --state ESTABLISHED,RELATED -j ACCEPT
 
 # Limitar nuevas conexiones por IP (protección contra ataques)
-iptables -I ANTIDDOS -p tcp --dport 3306 -m connlimit --connlimit-above 10 -j REJECT --reject-with tcp-reset
+$IPTABLES -I ANTIDDOS -p tcp --dport 3306 -m connlimit --connlimit-above 10 -j REJECT --reject-with tcp-reset
 
 # Rate limit para nuevas conexiones
-iptables -I ANTIDDOS -p tcp --dport 3306 --syn -m limit --limit 10/s --limit-burst 20 -j ACCEPT
+$IPTABLES -I ANTIDDOS -p tcp --dport 3306 --syn -m limit --limit 10/s --limit-burst 20 -j ACCEPT
 
 # Permitir conexiones desde localhost sin límites
-iptables -I ANTIDDOS -s 127.0.0.1 -p tcp --dport 3306 -j ACCEPT
-iptables -I ANTIDDOS -s ::1 -p tcp --dport 3306 -j ACCEPT
+$IPTABLES -I ANTIDDOS -s 127.0.0.1 -p tcp --dport 3306 -j ACCEPT
+$IPTABLES -I ANTIDDOS -s ::1 -p tcp --dport 3306 -j ACCEPT
 
 echo -e "${GREEN}✓ Puerto 3306 configurado${NC}"
 
 echo -e "${YELLOW}[2/4] Aplicando protecciones adicionales...${NC}"
 
 # Protección contra SYN flood específica para MySQL
-iptables -I ANTIDDOS -p tcp --dport 3306 --syn -m recent --name mysql_syn --set
-iptables -I ANTIDDOS -p tcp --dport 3306 --syn -m recent --name mysql_syn --update --seconds 1 --hitcount 5 -j DROP
+$IPTABLES -I ANTIDDOS -p tcp --dport 3306 --syn -m recent --name mysql_syn --set
+$IPTABLES -I ANTIDDOS -p tcp --dport 3306 --syn -m recent --name mysql_syn --update --seconds 1 --hitcount 5 -j DROP
 
 # Bloquear paquetes inválidos
-iptables -I ANTIDDOS -p tcp --dport 3306 -m state --state INVALID -j DROP
+$IPTABLES -I ANTIDDOS -p tcp --dport 3306 -m state --state INVALID -j DROP
 
 echo -e "${GREEN}✓ Protecciones aplicadas${NC}"
 
@@ -60,7 +74,7 @@ echo -e "${YELLOW}[3/4] Configurando IPs de confianza...${NC}"
 
 # Permitir IP pública del servidor (para conexiones locales)
 SERVER_PUBLIC_IP="190.57.138.18"
-iptables -I ANTIDDOS -s "$SERVER_PUBLIC_IP" -p tcp --dport 3306 -j ACCEPT
+$IPTABLES -I ANTIDDOS -s "$SERVER_PUBLIC_IP" -p tcp --dport 3306 -j ACCEPT
 echo -e "${GREEN}  ✓ Permitido desde IP pública del servidor: $SERVER_PUBLIC_IP${NC}"
 
 # Leer IPs de la whitelist si existe
@@ -70,7 +84,7 @@ if [ -f /etc/antiddos/whitelist.txt ]; then
         [[ -z "$ip" || "$ip" =~ ^# ]] && continue
         
         # Permitir acceso completo desde IPs en whitelist
-        iptables -I ANTIDDOS -s "$ip" -p tcp --dport 3306 -j ACCEPT
+        $IPTABLES -I ANTIDDOS -s "$ip" -p tcp --dport 3306 -j ACCEPT
         echo "  ✓ Permitido desde: $ip"
     done < /etc/antiddos/whitelist.txt
 else
@@ -100,7 +114,7 @@ echo "  ✓ Con límite de 10 conexiones por IP"
 echo "  ✓ Rate limit de 10 conexiones/segundo"
 echo
 echo "Reglas aplicadas:"
-iptables -L ANTIDDOS -n -v | grep 3306
+$IPTABLES -L ANTIDDOS -n -v | grep 3306
 echo
 echo -e "${YELLOW}Recomendaciones de seguridad:${NC}"
 echo "1. Agrega las IPs de tus aplicaciones a la whitelist:"
@@ -118,4 +132,4 @@ echo "Para verificar conexiones activas:"
 echo "  sudo ss -tnp | grep :3306"
 echo
 echo "Para ver estadísticas del puerto:"
-echo "  sudo iptables -L ANTIDDOS -n -v | grep 3306"
+echo "  sudo $IPTABLES -L ANTIDDOS -n -v | grep 3306"
