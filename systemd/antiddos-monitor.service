@@ -1,0 +1,23 @@
+[Unit]
+Description=Anti-DDoS Monitoring Daemon
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -m antiddos.monitor -c /etc/antiddos/config.yaml
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=false
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

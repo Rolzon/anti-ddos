@@ -1,0 +1,8 @@
+pyyaml==6.0.1
+psutil==5.9.5
+geoip2==4.7.0
+maxminddb==2.4.0
+cryptography==41.0.4
+requests==2.31.0
+python-iptables==1.0.1
+watchdog==3.0.0

@@ -1,0 +1,174 @@
+# Anti-DDoS Configuration File
+
+# General Settings
+general:
+  log_level: INFO
+  log_file: /var/log/antiddos/antiddos.log
+  pid_file: /var/run/antiddos.pid
+  check_interval: 5  # seconds
+
+# Bandwidth Monitoring
+bandwidth:
+  enabled: true
+  interface: eth0  # Network interface to monitor
+  threshold_mbps: 1000  # Trigger mitigation at this bandwidth (Mbps)
+  threshold_pps: 100000  # Trigger mitigation at this PPS
+  window_seconds: 10  # Time window for averaging
+  auto_mitigate: true
+
+# Country Filtering (GeoIP)
+country_filter:
+  enabled: true
+  mode: blacklist  # blacklist or whitelist
+  # Blacklist mode: block these countries
+  blacklist:
+    - CN  # China
+    - RU  # Russia
+    - KP  # North Korea
+  # Whitelist mode: only allow these countries
+  whitelist:
+    - US
+    - CA
+    - GB
+    - DE
+    - FR
+  # Trigger country filter when bandwidth exceeds threshold
+  trigger_on_bandwidth: true
+  trigger_threshold_mbps: 500
+
+# Global Blacklist
+blacklist:
+  enabled: true
+  file: /etc/antiddos/blacklist.txt
+  auto_save: true
+  # Automatically blacklist IPs exceeding connection limits
+  auto_blacklist:
+    enabled: true
+    connections_per_second: 100
+    duration_seconds: 3600  # Ban for 1 hour
+
+# DoS Filter
+dos_filter:
+  enabled: true
+  # SYN flood protection
+  syn_flood:
+    enabled: true
+    threshold: 50  # connections per second per IP
+    action: drop
+  # UDP flood protection
+  udp_flood:
+    enabled: true
+    threshold: 100  # packets per second per IP
+    action: drop
+  # ICMP flood protection
+  icmp_flood:
+    enabled: true
+    threshold: 10  # packets per second per IP
+    action: drop
+  # Connection limit per IP
+  connection_limit:
+    enabled: true
+    max_connections: 50
+    action: drop
+
+# SSH Protection (Fail2ban-like)
+ssh_protection:
+  enabled: true
+  log_file: /var/log/auth.log
+  max_attempts: 5
+  ban_time: 3600  # seconds (1 hour)
+  find_time: 600  # seconds (10 minutes)
+  # Custom banner to show on failed attempts
+  banner: |
+    ===============================================
+    WARNING: UNAUTHORIZED ACCESS ATTEMPT DETECTED
+    ===============================================
+    Your IP has been logged and will be banned
+    after multiple failed attempts.
+    All activities are monitored and recorded.
+    ===============================================
+
+# XCord Blacklist Handler
+xcord:
+  enabled: true
+  port: 9999
+  # Encryption key for secure communication (change this!)
+  encryption_key: "CHANGE_THIS_TO_A_SECURE_KEY_32_CHARS_MINIMUM"
+  # List of trusted servers to sync with
+  peers:
+    # - "192.168.1.100:9999"
+    # - "192.168.1.101:9999"
+  sync_interval: 300  # seconds (5 minutes)
+  # Require authentication token
+  auth_token: "CHANGE_THIS_TO_A_SECURE_TOKEN"
+
+# Whitelist (IPs that bypass all filters)
+whitelist:
+  enabled: true
+  ips:
+    - 127.0.0.1
+    - ::1
+    # Add your trusted IPs here
+    # - 1.2.3.4
+  file: /etc/antiddos/whitelist.txt
+
+# Notifications
+notifications:
+  enabled: true
+  
+  # Discord notifications (recommended)
+  discord:
+    enabled: true
+    # Main webhook URL (fallback)
+    webhook_url: "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN"
+    
+    # Public channel for major attacks (optional)
+    # This channel will receive notifications about severe attacks
+    public_channel: "https://discord.com/api/webhooks/PUBLIC_WEBHOOK_ID/PUBLIC_WEBHOOK_TOKEN"
+    
+    # Admin channel for all notifications (optional)
+    # This channel will receive all notifications including minor events
+    admin_channel: "https://discord.com/api/webhooks/ADMIN_WEBHOOK_ID/ADMIN_WEBHOOK_TOKEN"
+    
+    # Role to mention for critical attacks (optional)
+    # Get role ID from Discord: Right-click role -> Copy ID (Developer Mode must be enabled)
+    mention_role: ""  # Example: "123456789012345678"
+    
+    # Notification settings
+    notify_attacks: true          # Notify when DDoS attacks are detected
+    notify_mitigations: true      # Notify when mitigation is activated/deactivated
+    notify_blocks: true           # Notify when IPs are blocked
+    notify_unblocks: false        # Notify when IPs are unblocked (can be noisy)
+    
+    # Thresholds for public notifications
+    public_threshold_mbps: 500    # Notify public channel if attack exceeds this
+    public_threshold_ips: 10      # Notify public channel if blocking this many IPs at once
+    
+    # Statistics report (optional)
+    send_daily_report: true       # Send daily statistics report
+    report_time: "09:00"          # Time to send report (24h format)
+  
+  # Email notifications (optional, requires mail server)
+  email:
+    enabled: false
+    smtp_server: smtp.gmail.com
+    smtp_port: 587
+    from_address: alert@yourdomain.com
+    to_addresses:
+      - admin@yourdomain.com
+    username: your_email@gmail.com
+    password: your_password
+  
+  # Generic webhook notifications (Slack, etc.)
+  webhook:
+    enabled: false
+    url: https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+
+# Advanced Settings
+advanced:
+  # Use conntrack for connection tracking
+  use_conntrack: true
+  # Maximum entries in connection table
+  max_conntrack_entries: 100000
+  # Enable kernel-level protections
+  kernel_hardening: true

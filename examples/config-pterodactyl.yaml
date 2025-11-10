@@ -1,0 +1,129 @@
+# Example configuration for Pterodactyl and Database servers
+# Copy this to /etc/antiddos/config.yaml and customize
+
+general:
+  log_level: INFO
+  log_file: /var/log/antiddos/antiddos.log
+  pid_file: /var/run/antiddos.pid
+  check_interval: 5
+
+# Bandwidth monitoring - adjust based on your server capacity
+bandwidth:
+  enabled: true
+  interface: eth0  # CHANGE THIS to your network interface
+  threshold_mbps: 1000  # Trigger mitigation at 1 Gbps
+  threshold_pps: 100000  # Trigger at 100k packets/sec
+  window_seconds: 10
+  auto_mitigate: true
+
+# Country filtering - block known attack sources
+country_filter:
+  enabled: true
+  mode: blacklist
+  blacklist:
+    - CN  # China
+    - RU  # Russia
+    - KP  # North Korea
+    - IR  # Iran
+    - VN  # Vietnam
+    - IN  # India (optional, remove if you have legitimate traffic)
+  whitelist: []
+  trigger_on_bandwidth: true
+  trigger_threshold_mbps: 500  # Activate country filter at 500 Mbps
+
+# Global blacklist
+blacklist:
+  enabled: true
+  file: /etc/antiddos/blacklist.txt
+  auto_save: true
+  auto_blacklist:
+    enabled: true
+    connections_per_second: 100
+    duration_seconds: 3600  # Ban for 1 hour
+
+# DoS protection - tuned for game servers and web traffic
+dos_filter:
+  enabled: true
+  syn_flood:
+    enabled: true
+    threshold: 50  # SYN packets per second
+    action: drop
+  udp_flood:
+    enabled: true
+    threshold: 100  # UDP packets per second (higher for game servers)
+    action: drop
+  icmp_flood:
+    enabled: true
+    threshold: 10  # ICMP packets per second
+    action: drop
+  connection_limit:
+    enabled: true
+    max_connections: 50  # Max connections per IP
+    action: drop
+
+# SSH protection - strict for production servers
+ssh_protection:
+  enabled: true
+  log_file: /var/log/auth.log
+  max_attempts: 3  # Only 3 attempts allowed
+  ban_time: 7200  # Ban for 2 hours
+  find_time: 600  # Within 10 minutes
+  banner: |
+    ===============================================
+    WARNING: UNAUTHORIZED ACCESS ATTEMPT DETECTED
+    ===============================================
+    This is a production Pterodactyl server.
+    Your IP has been logged and will be banned
+    after multiple failed attempts.
+    All activities are monitored and recorded.
+    Contact: admin@yourdomain.com
+    ===============================================
+
+# XCord - for multi-server setups
+xcord:
+  enabled: true  # Set to false if single server
+  port: 9999
+  # IMPORTANT: Change these keys!
+  encryption_key: "CHANGE_THIS_TO_A_SECURE_32_CHAR_KEY"
+  auth_token: "CHANGE_THIS_TO_A_SECURE_TOKEN"
+  # Add your other server IPs here
+  peers:
+    # - "panel.yourdomain.com:9999"
+    # - "wings1.yourdomain.com:9999"
+    # - "wings2.yourdomain.com:9999"
+  sync_interval: 300  # Sync every 5 minutes
+
+# Whitelist - CRITICAL: Add your IPs here!
+whitelist:
+  enabled: true
+  ips:
+    - 127.0.0.1
+    - ::1
+    # ADD YOUR IPS HERE:
+    # - YOUR_ADMIN_IP
+    # - PANEL_SERVER_IP
+    # - WINGS_SERVER_IP
+    # - DATABASE_SERVER_IP
+  file: /etc/antiddos/whitelist.txt
+
+# Notifications - configure for alerts
+notifications:
+  enabled: false  # Enable after configuring
+  email:
+    enabled: false
+    smtp_server: smtp.gmail.com
+    smtp_port: 587
+    from_address: antiddos@yourdomain.com
+    to_addresses:
+      - admin@yourdomain.com
+    username: your_email@gmail.com
+    password: your_app_password
+  webhook:
+    enabled: false
+    url: https://discord.com/api/webhooks/YOUR_WEBHOOK_URL
+
+# Advanced settings
+advanced:
+  use_conntrack: true
+  max_conntrack_entries: 100000
+  kernel_hardening: true
