@@ -14,6 +14,28 @@ class FirewallManager:
         self.config = config
         self.logger = logging.getLogger(__name__)
         self.chain_name = "ANTIDDOS"
+        
+        # Detect iptables binary (prefer iptables-legacy)
+        self.iptables_cmd = self._detect_iptables()
+        self.logger.info(f"Using iptables binary: {self.iptables_cmd}")
+    
+    def _detect_iptables(self) -> str:
+        """Detect which iptables binary to use"""
+        # Try iptables-legacy first
+        try:
+            result = subprocess.run(
+                ['iptables-legacy', '-L', '-n'],
+                capture_output=True,
+                check=False,
+                timeout=5
+            )
+            if result.returncode == 0:
+                return 'iptables-legacy'
+        except:
+            pass
+        
+        # Fallback to regular iptables
+        return 'iptables'
     
     def run_command(self, cmd: List[str]) -> bool:
         """Run iptables command"""
@@ -38,13 +60,13 @@ class FirewallManager:
         self.logger.info("Initializing firewall rules")
         
         # Create custom chain if it doesn't exist
-        self.run_command(['iptables', '-N', self.chain_name])
+        self.run_command([self.iptables_cmd, '-N', self.chain_name])
         
         # Flush existing rules in our chain
-        self.run_command(['iptables', '-F', self.chain_name])
+        self.run_command([self.iptables_cmd, '-F', self.chain_name])
         
         # Insert our chain at the beginning of INPUT
-        self.run_command(['iptables', '-I', 'INPUT', '-j', self.chain_name])
+        self.run_command([self.iptables_cmd, '-I', 'INPUT', '-j', self.chain_name])
         
         # Apply kernel hardening if configured
         if self.config.get('advanced.kernel_hardening', True):
@@ -102,13 +124,13 @@ class FirewallManager:
         if self.config.get('dos_filter.syn_flood.enabled', True):
             threshold = self.config.get('dos_filter.syn_flood.threshold', 50)
             self.run_command([
-                'iptables', '-A', self.chain_name,
+                self.iptables_cmd, '-A', self.chain_name,
                 '-p', 'tcp', '--syn',
                 '-m', 'limit', '--limit', f'{threshold}/s', '--limit-burst', str(threshold * 2),
                 '-j', 'ACCEPT'
             ])
             self.run_command([
-                'iptables', '-A', self.chain_name,
+                self.iptables_cmd, '-A', self.chain_name,
                 '-p', 'tcp', '--syn',
                 '-j', 'DROP'
             ])
@@ -117,13 +139,13 @@ class FirewallManager:
         if self.config.get('dos_filter.udp_flood.enabled', True):
             threshold = self.config.get('dos_filter.udp_flood.threshold', 100)
             self.run_command([
-                'iptables', '-A', self.chain_name,
+                self.iptables_cmd, '-A', self.chain_name,
                 '-p', 'udp',
                 '-m', 'limit', '--limit', f'{threshold}/s', '--limit-burst', str(threshold * 2),
                 '-j', 'ACCEPT'
             ])
             self.run_command([
-                'iptables', '-A', self.chain_name,
+                self.iptables_cmd, '-A', self.chain_name,
                 '-p', 'udp',
                 '-j', 'DROP'
             ])
@@ -132,13 +154,13 @@ class FirewallManager:
         if self.config.get('dos_filter.icmp_flood.enabled', True):
             threshold = self.config.get('dos_filter.icmp_flood.threshold', 10)
             self.run_command([
-                'iptables', '-A', self.chain_name,
+                self.iptables_cmd, '-A', self.chain_name,
                 '-p', 'icmp',
                 '-m', 'limit', '--limit', f'{threshold}/s', '--limit-burst', str(threshold * 2),
                 '-j', 'ACCEPT'
             ])
             self.run_command([
-                'iptables', '-A', self.chain_name,
+                self.iptables_cmd, '-A', self.chain_name,
                 '-p', 'icmp',
                 '-j', 'DROP'
             ])
@@ -147,7 +169,7 @@ class FirewallManager:
         if self.config.get('dos_filter.connection_limit.enabled', True):
             max_conn = self.config.get('dos_filter.connection_limit.max_connections', 50)
             self.run_command([
-                'iptables', '-A', self.chain_name,
+                self.iptables_cmd, '-A', self.chain_name,
                 '-p', 'tcp',
                 '-m', 'connlimit', '--connlimit-above', str(max_conn),
                 '-j', 'REJECT', '--reject-with', 'tcp-reset'
@@ -174,7 +196,7 @@ class FirewallManager:
         
         # Add to beginning of chain for immediate effect
         self.run_command([
-            'iptables', '-I', self.chain_name, '1',
+            self.iptables_cmd, '-I', self.chain_name, '1',
             '-s', ip,
             '-j', 'DROP'
         ])
@@ -186,7 +208,7 @@ class FirewallManager:
         # Remove all rules matching this IP
         while True:
             result = subprocess.run(
-                ['iptables', '-D', self.chain_name, '-s', ip, '-j', 'DROP'],
+                [self.iptables_cmd, '-D', self.chain_name, '-s', ip, '-j', 'DROP'],
                 capture_output=True,
                 check=False
             )
@@ -194,23 +216,23 @@ class FirewallManager:
                 break
     
     def whitelist_ip(self, ip: str):
-        """Whitelist an IP address (bypass all filters)"""
+        """Add IP to whitelist (allow all traffic)"""
         self.logger.info(f"Whitelisting IP {ip}")
         
         # Add ACCEPT rule at the beginning
         self.run_command([
-            'iptables', '-I', self.chain_name, '1',
+            self.iptables_cmd, '-I', self.chain_name, '1',
             '-s', ip,
             '-j', 'ACCEPT'
         ])
     
-    def remove_whitelist_ip(self, ip: str):
+    def remove_from_whitelist(self, ip: str):
         """Remove IP from whitelist"""
         self.logger.info(f"Removing IP {ip} from whitelist")
         
         while True:
             result = subprocess.run(
-                ['iptables', '-D', self.chain_name, '-s', ip, '-j', 'ACCEPT'],
+                [self.iptables_cmd, '-D', self.chain_name, '-s', ip, '-j', 'ACCEPT'],
                 capture_output=True,
                 check=False
             )
@@ -223,20 +245,20 @@ class FirewallManager:
         
         # Create country-specific chain
         chain_name = f"ANTIDDOS_{country_code}"
-        self.run_command(['iptables', '-N', chain_name])
-        self.run_command(['iptables', '-F', chain_name])
+        self.run_command([self.iptables_cmd, '-N', chain_name])
+        self.run_command([self.iptables_cmd, '-F', chain_name])
         
         # Add all IP ranges to the chain
         for ip_range in ip_ranges:
             self.run_command([
-                'iptables', '-A', chain_name,
+                self.iptables_cmd, '-A', chain_name,
                 '-s', ip_range,
                 '-j', 'DROP'
             ])
         
         # Jump to country chain from main chain
         self.run_command([
-            'iptables', '-A', self.chain_name,
+            self.iptables_cmd, '-A', self.chain_name,
             '-j', chain_name
         ])
     
@@ -248,21 +270,21 @@ class FirewallManager:
         
         # Remove jump to country chain
         self.run_command([
-            'iptables', '-D', self.chain_name,
+            self.iptables_cmd, '-D', self.chain_name,
             '-j', chain_name
         ])
         
         # Flush and delete country chain
-        self.run_command(['iptables', '-F', chain_name])
-        self.run_command(['iptables', '-X', chain_name])
+        self.run_command([self.iptables_cmd, '-F', chain_name])
+        self.run_command([self.iptables_cmd, '-X', chain_name])
     
     def cleanup(self):
         """Remove all firewall rules"""
         self.logger.info("Cleaning up firewall rules")
         
         # Remove jump to our chain
-        self.run_command(['iptables', '-D', 'INPUT', '-j', self.chain_name])
+        self.run_command([self.iptables_cmd, '-D', 'INPUT', '-j', self.chain_name])
         
         # Flush and delete our chain
-        self.run_command(['iptables', '-F', self.chain_name])
-        self.run_command(['iptables', '-X', self.chain_name])
+        self.run_command([self.iptables_cmd, '-F', self.chain_name])
+        self.run_command([self.iptables_cmd, '-X', self.chain_name])
