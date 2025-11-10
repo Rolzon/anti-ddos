@@ -136,19 +136,39 @@ sudo systemctl status antiddos-monitor
 
 ## 🔧 Configuración para Pterodactyl y Bases de Datos
 
-### Proteger Base de Datos MySQL/MariaDB
+### Abrir y Proteger Puerto MySQL/MariaDB (3306)
+
+**Opción 1: Script Automático (Recomendado)**
+
+```bash
+# Ejecutar script de configuración
+sudo /opt/anti-ddos/scripts/open-mysql-port.sh
+```
+
+Este script automáticamente:
+- ✅ Abre el puerto 3306
+- ✅ Aplica límites de conexión (10 por IP)
+- ✅ Configura rate limiting
+- ✅ Protege contra SYN flood
+- ✅ Permite acceso desde whitelist
+
+**Opción 2: Manual**
 
 ```bash
 # Limitar conexiones por IP
 sudo iptables -I ANTIDDOS -p tcp --dport 3306 -m connlimit --connlimit-above 10 -j REJECT
 
 # Limitar tasa de nuevas conexiones
-sudo iptables -I ANTIDDOS -p tcp --dport 3306 --syn -m limit --limit 10/s -j ACCEPT
-sudo iptables -I ANTIDDOS -p tcp --dport 3306 --syn -j DROP
+sudo iptables -I ANTIDDOS -p tcp --dport 3306 --syn -m limit --limit 10/s --limit-burst 20 -j ACCEPT
+
+# Permitir desde localhost
+sudo iptables -I ANTIDDOS -s 127.0.0.1 -p tcp --dport 3306 -j ACCEPT
 
 # Guardar reglas
 sudo netfilter-persistent save
 ```
+
+**Ver guía completa:** `docs/OPEN_PORTS.md`
 
 ### Proteger Panel Pterodactyl
 

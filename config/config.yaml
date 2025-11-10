@@ -172,3 +172,12 @@ advanced:
   max_conntrack_entries: 100000
   # Enable kernel-level protections
   kernel_hardening: true
+  
+  # Allowed ports (bypass DoS filters but still apply rate limits)
+  allowed_ports:
+    - 3306  # MySQL/MariaDB
+    - 5432  # PostgreSQL (optional)
+    - 6379  # Redis (optional)
+    - 22    # SSH
+    - 80    # HTTP
+    - 443   # HTTPS
