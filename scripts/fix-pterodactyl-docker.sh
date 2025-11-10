@@ -107,14 +107,32 @@ fi
 $IPTABLES -I INPUT 1 -p tcp --dport 2022 -j ACCEPT
 echo "  ✓ Puerto 2022 (SFTP) permitido"
 
-# Rango de puertos de servidores (25565-25665 para Minecraft, etc)
+# Puerto Minecraft Java (25565)
 if [ "$HAS_ANTIDDOS" = true ]; then
-    $IPTABLES -I ANTIDDOS 1 -p tcp --dport 25565:25665 -j ACCEPT
-    $IPTABLES -I ANTIDDOS 1 -p udp --dport 25565:25665 -j ACCEPT
+    $IPTABLES -I ANTIDDOS 1 -p tcp --dport 25565 -j ACCEPT
+    $IPTABLES -I ANTIDDOS 1 -p udp --dport 25565 -j ACCEPT
 fi
-$IPTABLES -I INPUT 1 -p tcp --dport 25565:25665 -j ACCEPT
-$IPTABLES -I INPUT 1 -p udp --dport 25565:25665 -j ACCEPT
-echo "  ✓ Puertos 25565-25665 (Servidores) permitidos"
+$IPTABLES -I INPUT 1 -p tcp --dport 25565 -j ACCEPT
+$IPTABLES -I INPUT 1 -p udp --dport 25565 -j ACCEPT
+echo "  ✓ Puerto 25565 (Minecraft Java) permitido"
+
+# Puerto Minecraft Bedrock (19132)
+if [ "$HAS_ANTIDDOS" = true ]; then
+    $IPTABLES -I ANTIDDOS 1 -p tcp --dport 19132 -j ACCEPT
+    $IPTABLES -I ANTIDDOS 1 -p udp --dport 19132 -j ACCEPT
+fi
+$IPTABLES -I INPUT 1 -p tcp --dport 19132 -j ACCEPT
+$IPTABLES -I INPUT 1 -p udp --dport 19132 -j ACCEPT
+echo "  ✓ Puerto 19132 (Minecraft Bedrock) permitido"
+
+# Rango de puertos de servidores Pterodactyl (19133-20100)
+if [ "$HAS_ANTIDDOS" = true ]; then
+    $IPTABLES -I ANTIDDOS 1 -p tcp --dport 19133:20100 -j ACCEPT
+    $IPTABLES -I ANTIDDOS 1 -p udp --dport 19133:20100 -j ACCEPT
+fi
+$IPTABLES -I INPUT 1 -p tcp --dport 19133:20100 -j ACCEPT
+$IPTABLES -I INPUT 1 -p udp --dport 19133:20100 -j ACCEPT
+echo "  ✓ Puertos 19133-20100 (Servidores Pterodactyl) permitidos"
 
 echo -e "${GREEN}✓ Puertos de Pterodactyl permitidos${NC}"
 
@@ -145,7 +163,9 @@ echo "  ✓ Interfaz docker0: PERMITIDA"
 echo "  ✓ Redes Docker: PERMITIDAS"
 echo "  ✓ Puerto 8080 (Wings): PERMITIDO"
 echo "  ✓ Puerto 2022 (SFTP): PERMITIDO"
-echo "  ✓ Puertos 25565-25665: PERMITIDOS"
+echo "  ✓ Puerto 25565 (Minecraft Java): PERMITIDO"
+echo "  ✓ Puerto 19132 (Minecraft Bedrock): PERMITIDO"
+echo "  ✓ Puertos 19133-20100 (Servidores): PERMITIDOS"
 echo "  ✓ Localhost: PERMITIDO"
 echo
 

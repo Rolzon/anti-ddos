@@ -214,7 +214,9 @@ Este script permite:
 - ✅ Redes internas de Docker (172.x.x.x, 10.x.x.x)
 - ✅ Puerto 8080 (Wings)
 - ✅ Puerto 2022 (SFTP)
-- ✅ Puertos de servidores (25565-25665)
+- ✅ Puerto 25565 (Minecraft Java)
+- ✅ Puerto 19132 (Minecraft Bedrock)
+- ✅ Puertos 19133-20100 (Servidores Pterodactyl)
 
 #### Configuración Manual
 
