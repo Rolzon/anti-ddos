@@ -25,12 +25,14 @@ fi
 echo -e "${YELLOW}Este script hará lo siguiente:${NC}"
 echo "  1. Detener todos los servicios Anti-DDoS"
 echo "  2. Eliminar servicios systemd"
-echo "  3. Limpiar TODAS las reglas de iptables"
+echo "  3. Limpiar SOLO las reglas ANTIDDOS (preserva Docker/Pterodactyl)"
 echo "  4. Restaurar política por defecto (ACCEPT)"
 echo "  5. Eliminar archivos de configuración"
 echo "  6. Desinstalar paquete Python"
 echo "  7. Eliminar directorio del proyecto"
 echo "  8. Limpiar logs"
+echo
+echo -e "${GREEN}IMPORTANTE: Las reglas de Docker/Pterodactyl NO serán modificadas${NC}"
 echo
 
 read -p "¿Estás SEGURO de continuar? (escribe 'SI' en mayúsculas): " confirm
@@ -79,20 +81,14 @@ systemctl daemon-reload
 echo -e "${GREEN}✓ Servicios eliminados${NC}"
 
 # ============================================
-# 3. LIMPIAR IPTABLES COMPLETAMENTE
+# 3. LIMPIAR SOLO REGLAS ANTIDDOS (SEGURO)
 # ============================================
 echo
-echo -e "${YELLOW}[3/10] Limpiando reglas de iptables...${NC}"
+echo -e "${YELLOW}[3/10] Limpiando SOLO reglas ANTIDDOS (preservando Docker/Pterodactyl)...${NC}"
 
 # Remover saltos a ANTIDDOS
 echo "  Removiendo saltos a ANTIDDOS..."
 while $IPTABLES -D INPUT -j ANTIDDOS 2>/dev/null; do
-    :
-done
-while $IPTABLES -D FORWARD -j ANTIDDOS 2>/dev/null; do
-    :
-done
-while $IPTABLES -D OUTPUT -j ANTIDDOS 2>/dev/null; do
     :
 done
 
@@ -110,24 +106,15 @@ for chain in $($IPTABLES -L -n | grep "^Chain ANTIDDOS_" | awk '{print $2}'); do
     $IPTABLES -X $chain 2>/dev/null
 done
 
-# Limpiar todas las cadenas principales
-echo "  Limpiando cadenas INPUT, FORWARD, OUTPUT..."
-$IPTABLES -F INPUT
-$IPTABLES -F FORWARD
-$IPTABLES -F OUTPUT
-$IPTABLES -F
-
 # Restaurar política por defecto a ACCEPT
 echo "  Restaurando política ACCEPT..."
 $IPTABLES -P INPUT ACCEPT
 $IPTABLES -P FORWARD ACCEPT
 $IPTABLES -P OUTPUT ACCEPT
 
-# Limpiar NAT y MANGLE
-$IPTABLES -t nat -F 2>/dev/null
-$IPTABLES -t mangle -F 2>/dev/null
-
-echo -e "${GREEN}✓ Iptables limpiado completamente${NC}"
+echo -e "${GREEN}✓ Reglas ANTIDDOS eliminadas${NC}"
+echo -e "${GREEN}✓ Reglas de Docker/Pterodactyl PRESERVADAS${NC}"
+echo -e "${YELLOW}⚠ NO se tocaron las cadenas DOCKER, NAT, ni FORWARD${NC}"
 
 # ============================================
 # 4. APLICAR REGLAS BÁSICAS SEGURAS

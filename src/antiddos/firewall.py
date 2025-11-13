@@ -10,6 +10,18 @@ from typing import List, Optional
 class FirewallManager:
     """Manage iptables rules for DDoS protection"""
     
+    # Protected chains that should NEVER be modified or deleted
+    PROTECTED_CHAINS = ['DOCKER', 'DOCKER-ISOLATION-STAGE-1', 'DOCKER-ISOLATION-STAGE-2', 'DOCKER-USER']
+    
+    # Protected subnets (Docker/Pterodactyl networks)
+    PROTECTED_SUBNETS = [
+        '172.16.0.0/12',  # Docker default range
+        '172.18.0.0/16',  # Pterodactyl Wings specific subnet
+        '10.0.0.0/8',     # Private network
+        '192.168.0.0/16', # Private network
+        '127.0.0.0/8'     # Loopback
+    ]
+    
     def __init__(self, config):
         self.config = config
         self.logger = logging.getLogger(__name__)
@@ -62,8 +74,18 @@ class FirewallManager:
         return 'iptables'
     
     def run_command(self, cmd: List[str]) -> bool:
-        """Run iptables command"""
+        """Run iptables command with safety checks"""
         try:
+            # Safety check: prevent modification of protected chains
+            if self._is_protected_chain_modification(cmd):
+                self.logger.warning(f"BLOCKED: Attempted to modify protected chain: {' '.join(cmd)}")
+                return False
+            
+            # Safety check: prevent deletion/flush of DOCKER chains
+            if self._is_dangerous_operation(cmd):
+                self.logger.warning(f"BLOCKED: Dangerous operation prevented: {' '.join(cmd)}")
+                return False
+            
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -78,6 +100,42 @@ class FirewallManager:
         except Exception as e:
             self.logger.error(f"Error running command: {e}")
             return False
+    
+    def _is_protected_chain_modification(self, cmd: List[str]) -> bool:
+        """Check if command attempts to modify protected chains"""
+        cmd_str = ' '.join(cmd)
+        
+        # Check for operations on protected chains
+        for chain in self.PROTECTED_CHAINS:
+            # Block deletion, flush, or modification of protected chains
+            if any([
+                f'-X {chain}' in cmd_str,  # Delete chain
+                f'-F {chain}' in cmd_str,  # Flush chain
+                f'-D {chain}' in cmd_str,  # Delete rule from chain
+                f'-R {chain}' in cmd_str,  # Replace rule in chain
+                (f'-A {chain}' in cmd_str or f'-I {chain}' in cmd_str) and self.chain_name not in cmd_str
+            ]):
+                return True
+        
+        return False
+    
+    def _is_dangerous_operation(self, cmd: List[str]) -> bool:
+        """Check if command is a dangerous operation"""
+        cmd_str = ' '.join(cmd)
+        
+        # Block operations that could break Docker/Pterodactyl
+        dangerous_patterns = [
+            '-t nat -F',           # Flush NAT table (breaks Docker)
+            '-t nat -X',           # Delete NAT chains
+            'FORWARD -P DROP',     # Change FORWARD policy to DROP
+            'FORWARD -F',          # Flush FORWARD chain
+        ]
+        
+        for pattern in dangerous_patterns:
+            if pattern in cmd_str:
+                return True
+        
+        return False
     
     def initialize(self):
         """Initialize firewall rules - Docker/Pterodactyl compatible"""
@@ -130,12 +188,16 @@ class FirewallManager:
         # Allow loopback
         self.run_command([self.iptables_cmd, '-I', 'INPUT', '1', '-i', 'lo', '-j', 'ACCEPT'])
         
-        # Allow Docker networks
-        docker_networks = ['172.16.0.0/12', '10.0.0.0/8', '192.168.0.0/16']
-        for network in docker_networks:
+        # Allow Docker networks - using PROTECTED_SUBNETS to ensure consistency
+        for network in self.PROTECTED_SUBNETS:
             self.run_command([self.iptables_cmd, '-I', 'INPUT', '1', '-s', network, '-j', 'ACCEPT'])
+            self.run_command([self.iptables_cmd, '-I', 'INPUT', '1', '-d', network, '-j', 'ACCEPT'])
         
-        self.logger.info("Docker exceptions added")
+        # CRITICAL: Ensure FORWARD chain allows Docker traffic
+        self.run_command([self.iptables_cmd, '-I', 'FORWARD', '1', '-i', 'docker0', '-j', 'ACCEPT'])
+        self.run_command([self.iptables_cmd, '-I', 'FORWARD', '1', '-o', 'docker0', '-j', 'ACCEPT'])
+        
+        self.logger.info("Docker exceptions added with full subnet protection")
     
     def _add_mysql_exceptions(self):
         """Add exceptions for MySQL from server public IP"""
@@ -361,12 +423,16 @@ class FirewallManager:
         self.run_command([self.iptables_cmd, '-X', chain_name])
     
     def cleanup(self):
-        """Remove all firewall rules"""
-        self.logger.info("Cleaning up firewall rules")
+        """Remove all firewall rules - SAFE cleanup that preserves Docker/Pterodactyl"""
+        self.logger.info("Cleaning up firewall rules (preserving Docker/Pterodactyl)")
         
         # Remove jump to our chain
         self.run_command([self.iptables_cmd, '-D', 'INPUT', '-j', self.chain_name])
         
-        # Flush and delete our chain
+        # Flush and delete our chain ONLY
         self.run_command([self.iptables_cmd, '-F', self.chain_name])
         self.run_command([self.iptables_cmd, '-X', self.chain_name])
+        
+        # IMPORTANT: DO NOT touch DOCKER chains, NAT table, or FORWARD chain
+        # Docker and Pterodactyl Wings manage these automatically
+        self.logger.info("Cleanup completed - Docker/Pterodactyl rules preserved")

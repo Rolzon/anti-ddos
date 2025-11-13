@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.1] - 2024-11-12
+
+### Security Enhancements
+- **CRITICAL**: Added protection for Docker/Pterodactyl firewall rules
+- Protected chains: DOCKER, DOCKER-ISOLATION-STAGE-1, DOCKER-ISOLATION-STAGE-2, DOCKER-USER
+- Explicit protection for Pterodactyl Wings subnet (172.18.0.0/16)
+- Automatic blocking of dangerous iptables operations (NAT flush, FORWARD policy changes)
+- Safe cleanup that preserves Docker/Pterodactyl rules
+
+### Changed
+- `firewall.py`: Added `PROTECTED_CHAINS` and `PROTECTED_SUBNETS` constants
+- `firewall.py`: Added `_is_protected_chain_modification()` validation method
+- `firewall.py`: Added `_is_dangerous_operation()` validation method
+- `firewall.py`: Enhanced `_add_docker_exceptions()` with bidirectional subnet rules
+- `uninstall.sh`: Modified to preserve Docker/Pterodactyl rules
+- `complete-uninstall.sh`: Changed to only clean ANTIDDOS chain, not all iptables
+
+### Added
+- New documentation: `docs/FIREWALL_SAFETY.md` with complete safety guidelines
+- Logging of blocked dangerous operations
+- FORWARD chain protection for Docker traffic
+
+### Fixed
+- Prevented accidental deletion of Docker NAT rules
+- Prevented modification of critical Docker chains
+- Ensured Pterodactyl Wings subnet is always allowed
+
 ## [1.0.0] - 2024-11-09
 
 ### Added

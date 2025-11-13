@@ -45,11 +45,15 @@ rm -f /etc/systemd/system/antiddos-ssh.service
 rm -f /etc/systemd/system/antiddos-xcord.service
 systemctl daemon-reload
 
-# Clean up firewall rules
-echo -e "${GREEN}[4/6] Cleaning up firewall rules...${NC}"
+# Clean up firewall rules (SAFE - preserves Docker/Pterodactyl)
+echo -e "${GREEN}[4/6] Cleaning up firewall rules (preserving Docker/Pterodactyl)...${NC}"
 iptables -D INPUT -j ANTIDDOS 2>/dev/null || true
 iptables -F ANTIDDOS 2>/dev/null || true
 iptables -X ANTIDDOS 2>/dev/null || true
+
+# IMPORTANT: DO NOT touch DOCKER chains, NAT table, or FORWARD chain
+# Docker and Pterodactyl Wings manage these automatically
+echo -e "${YELLOW}Note: Docker/Pterodactyl firewall rules preserved${NC}"
 
 # Remove Python package
 echo -e "${GREEN}[5/6] Removing Python package...${NC}"
