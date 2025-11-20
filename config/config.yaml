@@ -75,7 +75,7 @@ dos_filter:
 ssh_protection:
   enabled: true
   log_file: /var/log/auth.log
-  max_attempts: 5
+  max_attempts: 2
   ban_time: 3600  # seconds (1 hour)
   find_time: 600  # seconds (10 minutes)
   # Custom banner to show on failed attempts
@@ -112,6 +112,38 @@ whitelist:
     # - 1.2.3.4
   file: /etc/antiddos/whitelist.txt
 
+# Service-specific monitoring (Docker/Pterodactyl)
+services:
+  enabled: true
+  default_threshold_mbps: 25
+  default_threshold_pps: 800
+  status_file: /var/run/antiddos/service_stats.json
+  auto_rate_limit:
+    enabled: true
+    limit_pps: 200
+  auto_blacklist:
+    enabled: true
+    min_connections: 200
+    duration_seconds: 1800
+  auto_discovery:
+    enabled: true
+    mode: wings  # wings o docker
+    refresh_seconds: 60
+    wings:
+      api_url: http://190.57.138.18:8080
+      token: "5vMFCIiZ8hTwQ6D3"
+    docker:
+      binary: docker
+  definitions:
+    # Example:
+    # - id: mc-survival
+    #   name: "MC Survival"
+    #   interface: vetha1b2c3
+    #   port: 25565
+    #   protocol: tcp
+    #   threshold_mbps: 400
+    #   threshold_pps: 60000
+
 # Notifications
 notifications:
   enabled: true
@@ -119,34 +151,21 @@ notifications:
   # Discord notifications (recommended)
   discord:
     enabled: true
-    # Main webhook URL (fallback)
+    # Único webhook para todas las alertas (clientes + administración)
     webhook_url: "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN"
-    
-    # Public channel for major attacks (optional)
-    # This channel will receive notifications about severe attacks
-    public_channel: "https://discord.com/api/webhooks/PUBLIC_WEBHOOK_ID/PUBLIC_WEBHOOK_TOKEN"
-    
-    # Admin channel for all notifications (optional)
-    # This channel will receive all notifications including minor events
-    admin_channel: "https://discord.com/api/webhooks/ADMIN_WEBHOOK_ID/ADMIN_WEBHOOK_TOKEN"
-    
-    # Role to mention for critical attacks (optional)
-    # Get role ID from Discord: Right-click role -> Copy ID (Developer Mode must be enabled)
+
+    # Opcional: menciona un rol cuando el ataque sea crítico
     mention_role: ""  # Example: "123456789012345678"
-    
-    # Notification settings
-    notify_attacks: true          # Notify when DDoS attacks are detected
-    notify_mitigations: true      # Notify when mitigation is activated/deactivated
-    notify_blocks: true           # Notify when IPs are blocked
-    notify_unblocks: false        # Notify when IPs are unblocked (can be noisy)
-    
-    # Thresholds for public notifications
-    public_threshold_mbps: 500    # Notify public channel if attack exceeds this
-    public_threshold_ips: 10      # Notify public channel if blocking this many IPs at once
-    
-    # Statistics report (optional)
-    send_daily_report: true       # Send daily statistics report
-    report_time: "09:00"          # Time to send report (24h format)
+
+    # Ajustes de notificación
+    notify_attacks: true          # Alertar cuando se detecten ataques DDoS
+    notify_mitigations: true      # Avisar al activar/desactivar mitigación
+    notify_blocks: true           # Avisar cuando se bloquean IPs
+    notify_unblocks: false        # Avisar cuando se desbloquean IPs
+
+    # Programación de reportes
+    send_daily_report: true       # Enviar resumen diario
+    report_time: "09:00"          # Hora del reporte (24h)
   
   # Email notifications (optional, requires mail server)
   email:
@@ -191,3 +210,16 @@ advanced:
     # Connection limits
     max_connections_per_ip: 10
     rate_limit: "10/s"
+    rate_limit_burst: 40
+    protection_enabled: true
+    trusted_ips:
+      - 127.0.0.1
+      - 190.57.138.18
+      - 190.110.48.34
+
+  strict_limits:
+    enabled: true
+    burst_multiplier: 3
+    syn_limit: 1500
+    udp_limit: 3000
+    icmp_limit: 400

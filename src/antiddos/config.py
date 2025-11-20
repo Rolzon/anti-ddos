@@ -149,5 +149,35 @@ class Config:
                 'enabled': True,
                 'ips': ['127.0.0.1', '::1'],
                 'file': '/etc/antiddos/whitelist.txt'
+            },
+            'services': {
+                'enabled': False,
+                'default_threshold_mbps': 500,
+                'default_threshold_pps': 80000,
+                'status_file': '/var/run/antiddos/service_stats.json',
+                'window_seconds': 10,
+                'recovery_cycles': 3,
+                'auto_rate_limit': {
+                    'enabled': True,
+                    'limit_pps': 20000
+                },
+                'auto_blacklist': {
+                    'enabled': True,
+                    'min_connections': 200,
+                    'duration_seconds': 1800
+                },
+                'auto_discovery': {
+                    'enabled': False,
+                    'mode': 'wings',  # wings or docker
+                    'refresh_seconds': 60,
+                    'wings': {
+                        'api_url': 'http://127.0.0.1:8080',
+                        'token': ''
+                    },
+                    'docker': {
+                        'binary': 'docker'
+                    }
+                },
+                'definitions': []
             }
         }

@@ -1,0 +1,82 @@
+# ========================================
+# COMANDOS PARA EJECUTAR EN TU SERVIDOR
+# ========================================
+
+# PASO 1: Conectar al servidor
+ssh root@190.57.138.18
+
+# PASO 2: Ir al directorio del proyecto
+cd /opt/anti-ddos
+
+# PASO 3: Verificar versión actual
+cat VERSION
+# Debe mostrar: 1.0.0
+
+# PASO 4: Hacer backup de configuración (por seguridad)
+mkdir -p /tmp/antiddos-backup-manual
+cp -r /etc/antiddos/* /tmp/antiddos-backup-manual/
+echo "Backup guardado en: /tmp/antiddos-backup-manual/"
+
+# PASO 5: Detener servicios
+systemctl stop antiddos-monitor
+systemctl stop antiddos-ssh
+systemctl stop antiddos-xcord
+echo "Servicios detenidos"
+
+# PASO 6: Actualizar código desde GitHub
+git fetch origin
+git reset --hard origin/main
+echo "Código actualizado desde GitHub"
+
+# PASO 7: Verificar que los nuevos archivos están
+ls -la update-to-v1.0.1.sh
+ls -la quick-update.sh
+ls -la scripts/test-protections.sh
+
+# PASO 8: Actualizar paquete Python
+pip3 install -e . --upgrade
+echo "Paquete Python actualizado"
+
+# PASO 9: Restaurar configuración
+cp /tmp/antiddos-backup-manual/* /etc/antiddos/
+echo "Configuración restaurada"
+
+# PASO 10: Reiniciar servicios
+systemctl daemon-reload
+systemctl start antiddos-monitor
+systemctl start antiddos-ssh
+systemctl start antiddos-xcord
+echo "Servicios reiniciados"
+
+# PASO 11: Verificar versión nueva
+cat VERSION
+# Debe mostrar: 1.0.1
+
+# PASO 12: Verificar que servicios están corriendo
+systemctl status antiddos-monitor
+
+# PASO 13: Ver logs
+journalctl -u antiddos-monitor -n 50
+
+# PASO 14: Ejecutar test de protecciones
+bash scripts/test-protections.sh
+
+# PASO 15: Verificar Docker y Wings
+systemctl status docker
+systemctl status wings
+
+# PASO 16: Verificar subnet protegida
+iptables -L INPUT -n | grep 172.18.0
+
+# ========================================
+# ¡ACTUALIZACIÓN COMPLETADA!
+# ========================================
+
+# Ver logs en tiempo real:
+journalctl -u antiddos-monitor -f
+
+# Ver reglas de firewall:
+iptables -L -n -v --line-numbers
+
+# Ver subnet protegida:
+iptables -L INPUT -n | grep 172.18

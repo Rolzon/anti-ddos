@@ -3,7 +3,10 @@ Main monitoring daemon for Anti-DDoS system
 Monitors bandwidth, PPS, and applies filters dynamically
 """
 
+import json
 import time
+from pathlib import Path
+
 import psutil
 import logging
 import signal
@@ -17,6 +20,7 @@ from .firewall import FirewallManager
 from .geoip import GeoIPManager
 from .blacklist import BlacklistManager
 from .notifications import DiscordNotifier
+from .service_monitor import ServiceRegistry, ServiceTrafficMonitor
 
 
 class BandwidthMonitor:
@@ -145,6 +149,18 @@ class AntiDDoSMonitor:
         self.mitigation_active = False
         self.attack_start_time = None
         self.blocked_ips_in_attack = []
+
+        # Service-specific monitoring
+        self.service_registry = None
+        self.service_monitor = None
+        self.service_states: Dict[str, Dict[str, int]] = {}
+        self.service_stats_file = self.config.get('services.status_file', '/var/run/antiddos/service_stats.json')
+        self.service_recovery_ticks = int(self.config.get('services.recovery_cycles', 3))
+        if self.config.get('services.enabled', False):
+            self.logger.info("Service-level monitoring enabled")
+            self.service_registry = ServiceRegistry(self.config)
+            service_window = self.config.get('services.window_seconds', window)
+            self.service_monitor = ServiceTrafficMonitor(service_window)
         
         # Setup signal handlers
         signal.signal(signal.SIGTERM, self.signal_handler)
@@ -189,6 +205,7 @@ class AntiDDoSMonitor:
         while self.running:
             try:
                 self.check_bandwidth()
+                self.check_service_traffic()
                 self.check_dos_attacks()
                 self.connection_tracker.cleanup()
                 time.sleep(check_interval)
@@ -239,6 +256,136 @@ class AntiDDoSMonitor:
         # This would integrate with netfilter/conntrack to get real connection data
         # For now, this is a placeholder for the structure
         pass
+
+    def check_service_traffic(self):
+        """Check per-service traffic for Docker/Pterodactyl workloads"""
+        if not self.service_monitor or not self.service_registry:
+            return
+
+        services = self.service_registry.get_services()
+        if not services:
+            return
+
+        stats_map = self.service_monitor.collect_stats(services)
+        if not stats_map:
+            return
+
+        self._write_service_stats(stats_map)
+
+        for service in services:
+            stats = stats_map.get(service.id)
+            if not stats:
+                continue
+
+            total_mbps = stats.total_mbps
+            total_pps = stats.total_pps
+            threshold_mbps = service.threshold_mbps
+            threshold_pps = service.threshold_pps
+
+            exceeded = (
+                (threshold_mbps and total_mbps > threshold_mbps) or
+                (threshold_pps and total_pps > threshold_pps)
+            )
+
+            state = self.service_states.setdefault(service.id, {
+                'mitigation': False,
+                'cooldown': 0,
+                'rate_limited': False,
+                'last_alert': None,
+            })
+
+            if exceeded:
+                state['cooldown'] = 0
+                self._handle_service_attack(service, stats, state)
+            else:
+                if state.get('mitigation'):
+                    state['cooldown'] += 1
+                    if state['cooldown'] >= self.service_recovery_ticks:
+                        self._clear_service_mitigation(service, state)
+                else:
+                    state['cooldown'] = 0
+
+    def _handle_service_attack(self, service, stats, state):
+        """Apply targeted mitigation for a specific service"""
+        actions = []
+        rate_limit_cfg = self.config.get('services.auto_rate_limit', {})
+        if service.port and rate_limit_cfg.get('enabled', True):
+            limit_pps = int(service.rate_limit_pps or rate_limit_cfg.get('limit_pps', 20000))
+            self.firewall.apply_port_rate_limit(service.port, service.protocol, limit_pps)
+            state['rate_limited'] = True
+            actions.append(
+                f"Límite {service.port}/{service.protocol} aplicado ({limit_pps} PPS)"
+            )
+
+        auto_blacklist_cfg = self.config.get('services.auto_blacklist', {})
+        if auto_blacklist_cfg.get('enabled', True) and stats.top_attackers:
+            min_connections = int(auto_blacklist_cfg.get('min_connections', 200))
+            duration = auto_blacklist_cfg.get('duration_seconds', 1800)
+            for ip, connections in stats.top_attackers:
+                if connections < min_connections:
+                    continue
+                if self.blacklist.add_to_blacklist(
+                    ip,
+                    reason=(
+                        f"Servicio {service.display_name} excedió {connections} conexiones"
+                    ),
+                    duration=duration,
+                ):
+                    self.blocked_ips_in_attack.append(ip)
+                    actions.append(f"IP {ip} bloqueada ({connections} conexiones)")
+
+        if actions:
+            self.logger.warning(
+                f"Mitigación aplicada a {service.display_name}: {', '.join(actions)}"
+            )
+
+        if not state.get('mitigation'):
+            self.logger.warning(
+                f"Tráfico elevado en {service.display_name}: {stats.total_mbps:.2f} Mbps / {stats.total_pps} PPS"
+            )
+            state['mitigation'] = True
+
+        self.discord.notify_service_attack(service.display_name, stats, actions)
+
+    def _clear_service_mitigation(self, service, state):
+        """Reset mitigation actions for a service once traffic normalizes"""
+        if state.get('rate_limited') and service.port:
+            self.firewall.remove_port_rate_limit(service.port)
+            state['rate_limited'] = False
+
+        state['mitigation'] = False
+        state['cooldown'] = 0
+        self.discord.notify_service_recovered(service.display_name)
+        self.logger.info(f"Servicio {service.display_name} volvió a niveles normales")
+
+    def _write_service_stats(self, stats_map):
+        """Persist latest service stats to a JSON file for CLI/UI"""
+        if not self.service_stats_file:
+            return
+
+        try:
+            payload = {
+                'updated_at': datetime.utcnow().isoformat(),
+                'services': []
+            }
+            for stats in stats_map.values():
+                payload['services'].append({
+                    'id': stats.service.id,
+                    'name': stats.service.display_name,
+                    'mbps_in': round(stats.mbps_in, 2),
+                    'mbps_out': round(stats.mbps_out, 2),
+                    'pps_in': stats.pps_in,
+                    'pps_out': stats.pps_out,
+                    'connections': stats.connections,
+                    'mitigation': self.service_states.get(stats.service.id, {}).get('mitigation', False),
+                })
+
+            stats_path = Path(self.service_stats_file)
+            stats_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(stats_path, 'w', encoding='utf-8') as f:
+                json.dump(payload, f, indent=2)
+        except Exception as exc:
+            self.logger.debug(f"No se pudo escribir service stats: {exc}")
     
     def activate_mitigation(self):
         """Activate DDoS mitigation measures"""

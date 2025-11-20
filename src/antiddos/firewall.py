@@ -26,6 +26,7 @@ class FirewallManager:
         self.config = config
         self.logger = logging.getLogger(__name__)
         self.chain_name = "ANTIDDOS"
+        self.strict_chain = f"{self.chain_name}_GLOBAL"
         
         # Use iptables-nft for compatibility with Docker/Pterodactyl
         self.iptables_cmd = self._detect_iptables()
@@ -152,6 +153,9 @@ class FirewallManager:
         
         # Add MySQL exceptions for server public IP
         self._add_mysql_exceptions()
+
+        # Apply MySQL protection if enabled
+        self.apply_mysql_protection()
         
         # Insert our chain at the end of INPUT (after Docker rules)
         # Check if jump already exists to avoid duplicates
@@ -198,7 +202,103 @@ class FirewallManager:
         self.run_command([self.iptables_cmd, '-I', 'FORWARD', '1', '-o', 'docker0', '-j', 'ACCEPT'])
         
         self.logger.info("Docker exceptions added with full subnet protection")
-    
+
+    def _get_port_chain_name(self, port: int) -> str:
+        return f"{self.chain_name}_PORT_{port}"
+
+    def _chain_exists(self, chain_name: str) -> bool:
+        result = subprocess.run(
+            [self.iptables_cmd, '-L', chain_name],
+            capture_output=True,
+            check=False
+        )
+        return result.returncode == 0
+
+    def _ensure_chain(self, chain_name: str, flush: bool = True):
+        if not self._chain_exists(chain_name):
+            self.run_command([self.iptables_cmd, '-N', chain_name])
+        elif flush:
+            self.run_command([self.iptables_cmd, '-F', chain_name])
+
+    def _ensure_jump(self, chain_name: str, protocol: Optional[str] = None, port: Optional[int] = None):
+        check_cmd = [self.iptables_cmd, '-C', self.chain_name]
+        insert_cmd = [self.iptables_cmd, '-I', self.chain_name, '1']
+        if protocol:
+            check_cmd += ['-p', protocol]
+            insert_cmd += ['-p', protocol]
+        if port:
+            check_cmd += ['--dport', str(port)]
+            insert_cmd += ['--dport', str(port)]
+        check_cmd += ['-j', chain_name]
+        insert_cmd += ['-j', chain_name]
+
+        result = subprocess.run(check_cmd, capture_output=True, check=False)
+        if result.returncode != 0:
+            self.run_command(insert_cmd)
+
+    def _remove_jump(self, chain_name: str, protocol: Optional[str] = None, port: Optional[int] = None):
+        while True:
+            cmd = [self.iptables_cmd, '-D', self.chain_name]
+            if protocol:
+                cmd += ['-p', protocol]
+            if port:
+                cmd += ['--dport', str(port)]
+            cmd += ['-j', chain_name]
+            result = subprocess.run(cmd, capture_output=True, check=False)
+            if result.returncode != 0:
+                break
+
+    def apply_port_rate_limit(self, port: int, protocol: str = 'tcp', limit_pps: int = 20000) -> bool:
+        """Apply rate limiting rules for a specific port"""
+        protocol = (protocol or 'tcp').lower()
+        if protocol not in ('tcp', 'udp'):
+            self.logger.warning(f"Unsupported protocol {protocol} for port rate limit")
+            return False
+
+        chain_name = self._get_port_chain_name(port)
+        limit_pps = max(1, int(limit_pps))
+        burst = max(limit_pps * 2, limit_pps + 10)
+
+        self.logger.info(
+            f"Applying rate limit to port {port}/{protocol}: {limit_pps} PPS"
+        )
+
+        self._ensure_chain(chain_name)
+
+        # Allow limited traffic then drop the rest
+        self.run_command([
+            self.iptables_cmd, '-A', chain_name,
+            '-p', protocol,
+            '-m', 'limit', '--limit', f'{limit_pps}/second', '--limit-burst', str(burst),
+            '-j', 'RETURN'
+        ])
+
+        self.run_command([
+            self.iptables_cmd, '-A', chain_name,
+            '-j', 'DROP'
+        ])
+
+        self._ensure_jump(chain_name, protocol=protocol, port=port)
+
+        return True
+
+    def remove_port_rate_limit(self, port: int, protocol: str = 'tcp') -> bool:
+        """Remove rate limiting rules for a specific port"""
+        protocol = (protocol or 'tcp').lower()
+        if protocol not in ('tcp', 'udp'):
+            return False
+
+        chain_name = self._get_port_chain_name(port)
+        self.logger.info(f"Removing rate limit from port {port}/{protocol}")
+
+        self._remove_jump(chain_name, protocol=protocol, port=port)
+
+        # Flush and delete chain
+        self.run_command([self.iptables_cmd, '-F', chain_name])
+        self.run_command([self.iptables_cmd, '-X', chain_name])
+
+        return True
+
     def _add_mysql_exceptions(self):
         """Add exceptions for MySQL from server public IP"""
         mysql_config = self.config.get('advanced.mysql', {})
@@ -321,18 +421,50 @@ class FirewallManager:
     
     def apply_strict_limits(self):
         """Apply stricter rate limits during attack"""
-        self.logger.info("Applying strict rate limits")
-        
-        # Temporarily reduce limits by 50%
-        # This would modify existing rules or add more restrictive ones
-        pass
+        strict_cfg = self.config.get('advanced.strict_limits', {})
+        if not strict_cfg.get('enabled', False):
+            self.logger.debug("Strict limits disabled in config")
+            return
+
+        self.logger.info("Applying strict global rate limits")
+        self._ensure_chain(self.strict_chain)
+
+        burst_multiplier = max(1, int(strict_cfg.get('burst_multiplier', 2)))
+
+        def add_limit(protocol: str, match_args: List[str], limit_value: int):
+            limit_value = int(limit_value)
+            if limit_value <= 0:
+                return
+            burst = max(limit_value * burst_multiplier, limit_value + 1)
+            base_cmd = [self.iptables_cmd, '-A', self.strict_chain, '-p', protocol]
+            base_cmd += match_args
+            self.run_command(base_cmd + [
+                '-m', 'limit', '--limit', f'{limit_value}/second',
+                '--limit-burst', str(burst),
+                '-j', 'RETURN'
+            ])
+            self.run_command([
+                self.iptables_cmd, '-A', self.strict_chain,
+                '-p', protocol
+            ] + match_args + ['-j', 'DROP'])
+
+        syn_limit = strict_cfg.get('syn_limit', 3000)
+        add_limit('tcp', ['--syn'], syn_limit)
+
+        udp_limit = strict_cfg.get('udp_limit', 5000)
+        add_limit('udp', [], udp_limit)
+
+        icmp_limit = strict_cfg.get('icmp_limit', 800)
+        add_limit('icmp', [], icmp_limit)
+
+        self._ensure_jump(self.strict_chain)
     
     def apply_normal_limits(self):
         """Restore normal rate limits"""
         self.logger.info("Restoring normal rate limits")
-        
-        # Restore original limits
-        pass
+        self._remove_jump(self.strict_chain)
+        self.run_command([self.iptables_cmd, '-F', self.strict_chain])
+        self.run_command([self.iptables_cmd, '-X', self.strict_chain])
     
     def block_ip(self, ip: str, reason: str = ""):
         """Block an IP address"""

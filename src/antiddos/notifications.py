@@ -183,6 +183,76 @@ class DiscordNotifier:
             self._send_webhook(self.admin_channel, embed)
         elif self.webhook_url:
             self._send_webhook(self.webhook_url, embed)
+
+    def notify_service_attack(self, service_name: str, stats, actions: List[str]):
+        """Notify when a specific service exceeds thresholds"""
+        if not self.notify_attacks:
+            return
+
+        action_text = ", ".join(actions) if actions else "Monitorización reforzada"
+
+        embed = {
+            "title": f"🎮 Servicio bajo ataque: {service_name}",
+            "description": "Se detectó tráfico elevado en un servicio específico.",
+            "color": self._get_color(AlertLevel.WARNING),
+            "fields": [
+                {
+                    "name": "📊 Tráfico",
+                    "value": f"{stats.total_mbps:.2f} Mbps / {stats.total_pps:,} PPS",
+                    "inline": True
+                },
+                {
+                    "name": "⚙️ Acción",
+                    "value": action_text,
+                    "inline": False
+                },
+                {
+                    "name": "🔗 Conexiones",
+                    "value": str(stats.connections),
+                    "inline": True
+                },
+            ],
+            "footer": {"text": "Sistema Anti-DDoS"},
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+        if getattr(stats, 'top_attackers', None):
+            attackers = stats.top_attackers[:5]
+            embed["fields"].append({
+                "name": "🎯 IPs principales",
+                "value": "\n".join([f"`{ip}` ({count})" for ip, count in attackers]) or "N/A",
+                "inline": False
+            })
+
+        if self.admin_channel:
+            self._send_webhook(self.admin_channel, embed)
+        elif self.webhook_url:
+            self._send_webhook(self.webhook_url, embed)
+
+    def notify_service_recovered(self, service_name: str):
+        """Notify when a service returns to normal traffic"""
+        if not self.notify_mitigations:
+            return
+
+        embed = {
+            "title": f"✅ Servicio normalizado: {service_name}",
+            "description": "El tráfico volvió a niveles normales.",
+            "color": self._get_color(AlertLevel.SUCCESS),
+            "fields": [
+                {
+                    "name": "🕐 Hora",
+                    "value": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "inline": True
+                }
+            ],
+            "footer": {"text": "Sistema Anti-DDoS"},
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+        if self.admin_channel:
+            self._send_webhook(self.admin_channel, embed)
+        elif self.webhook_url:
+            self._send_webhook(self.webhook_url, embed)
     
     def notify_mitigation_deactivated(self):
         """Notify about mitigation deactivation"""
