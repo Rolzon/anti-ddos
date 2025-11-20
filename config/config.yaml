@@ -124,6 +124,7 @@ services:
   status_file: /var/run/antiddos/service_stats.json
   window_seconds: 5  # Ventana corta = detección rápida
   recovery_cycles: 5  # Confirmar recuperación antes de quitar mitigación
+  default_interface: dr0  # NIC del host donde llegan las conexiones
   auto_rate_limit:
     enabled: true
     limit_pps: 400  # Límite por puerto durante ataque
@@ -137,6 +138,7 @@ services:
     refresh_seconds: 60
     docker:
       binary: docker
+      default_interface: dr0
   definitions:
     # Example:
     # - id: mc-survival

@@ -4,10 +4,11 @@ Service-level monitoring utilities for Anti-DDoS
 
 from dataclasses import dataclass, field
 from collections import defaultdict, deque
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Set
 import logging
 import time
 import subprocess
+import json
 
 import psutil
 # requests is optional; guard usage for environments sin acceso
@@ -222,20 +223,30 @@ class ServiceRegistry:
         defaults = self._service_defaults()
         services: List[ServiceInfo] = []
 
+        binary = docker_cfg.get('binary') or 'docker'
+        default_interface = (
+            docker_cfg.get('default_interface') or
+            self.config.get('services.default_interface') or
+            self.config.get('bandwidth.interface')
+        )
+
         try:
             result = subprocess.run(
-                ['docker', 'ps', '--format', '{{.ID}} {{.Names}} {{.Ports}}'],
+                [binary, 'ps', '--format', '{{.ID}} {{.Names}} {{.Ports}}'],
                 capture_output=True,
                 text=True,
                 check=False
             )
         except FileNotFoundError:
-            self.logger.warning("Docker CLI no encontrado, se omite auto-discovery")
+            self.logger.warning(f"Docker CLI '{binary}' no encontrado, se omite auto-discovery")
             return services
 
         if result.returncode != 0:
-            self.logger.warning(f"docker ps falló: {result.stderr.strip()}")
+            self.logger.warning(f"{binary} ps falló: {result.stderr.strip()}")
             return services
+
+        available_ifaces: Set[str] = set(psutil.net_io_counters(pernic=True).keys())
+        interface_cache: Dict[str, Optional[str]] = {}
 
         for line in result.stdout.strip().splitlines():
             parts = line.split(' ', 2)
@@ -244,6 +255,13 @@ class ServiceRegistry:
             container_id, name, ports_field = parts
             if not ports_field or ports_field == '<none>':
                 continue
+
+            container_interface = self._get_container_interface(
+                container_id,
+                binary,
+                available_ifaces,
+                interface_cache,
+            ) or default_interface
 
             mappings = [p.strip() for p in ports_field.split(',') if p.strip()]
             for mapping in mappings:
@@ -265,6 +283,7 @@ class ServiceRegistry:
                     name=name,
                     port=port_value,
                     protocol=protocol,
+                    interface=container_interface,
                     threshold_mbps=defaults['threshold_mbps'],
                     threshold_pps=defaults['threshold_pps'],
                     rate_limit_pps=defaults['rate_limit_pps'],
@@ -283,6 +302,70 @@ class ServiceRegistry:
         fragment = fragment.split('/')[0]
         if fragment.isdigit():
             return int(fragment)
+        return None
+
+    def _get_container_interface(
+        self,
+        container_id: str,
+        docker_binary: str,
+        available_ifaces: Set[str],
+        cache: Dict[str, Optional[str]],
+    ) -> Optional[str]:
+        if container_id in cache:
+            return cache[container_id]
+
+        try:
+            inspect = subprocess.run(
+                [docker_binary, 'inspect', container_id, '--format', '{{json .NetworkSettings.Networks}}'],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except FileNotFoundError:
+            cache[container_id] = None
+            return None
+
+        if inspect.returncode != 0 or not inspect.stdout.strip():
+            cache[container_id] = None
+            return None
+
+        try:
+            networks = json.loads(inspect.stdout.strip()) or {}
+        except json.JSONDecodeError:
+            self.logger.debug(f"No se pudo parsear docker inspect para {container_id}")
+            cache[container_id] = None
+            return None
+
+        for network_data in networks.values():
+            endpoint_id = network_data.get('EndpointID')
+            interface = self._interface_from_endpoint(endpoint_id, available_ifaces)
+            if interface:
+                cache[container_id] = interface
+                return interface
+
+        cache[container_id] = None
+        return None
+
+    def _interface_from_endpoint(self, endpoint_id: Optional[str], available_ifaces: Set[str]) -> Optional[str]:
+        if not endpoint_id:
+            return None
+
+        candidates = [
+            f"veth{endpoint_id[:12]}",
+            f"veth{endpoint_id[:8]}",
+            f"veth{endpoint_id[:7]}",
+        ]
+
+        for candidate in candidates:
+            if candidate in available_ifaces:
+                return candidate
+
+        # Refresh interface list once in case new veth appeared recently
+        available_ifaces.update(psutil.net_io_counters(pernic=True).keys())
+        for candidate in candidates:
+            if candidate in available_ifaces:
+                return candidate
+
         return None
 
     def _dedupe_services(self, services: List[ServiceInfo]) -> List[ServiceInfo]:
