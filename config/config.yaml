@@ -107,7 +107,6 @@ whitelist:
   enabled: true
   ips:
     - 127.0.0.1
-    - ::1
     - 217.216.64.51
     - 147.93.147.175
     - 190.57.138.18
@@ -137,7 +136,7 @@ services:
     mode: wings  # wings o docker
     refresh_seconds: 60
     wings:
-      api_url: http://190.57.138.18:8080
+      api_url: https://dragon-01.dragonhosting.lat:8080
       token: "5vMFCIiZ8hTwQ6D3"
     docker:
       binary: docker
