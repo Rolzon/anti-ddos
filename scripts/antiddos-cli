@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+# Wrapper script to invoke the Anti-DDoS CLI module.
+# Allows calling `antiddos-cli` from anywhere once symlinked to /usr/local/bin.
+
+CONFIG_PATH="/etc/antiddos/config.yaml"
+
+PYTHON_BIN="python3"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="${SCRIPT_DIR%/scripts}"
+
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+  echo "Error: python3 not found in PATH" >&2
+  exit 1
+fi
+
+exec "$PYTHON_BIN" -m antiddos.cli -c "$CONFIG_PATH" "$@"
