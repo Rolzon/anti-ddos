@@ -157,6 +157,9 @@ class FirewallManager:
         # Apply MySQL protection if enabled
         self.apply_mysql_protection()
         
+        # Apply Wings API protection if enabled
+        self.apply_wings_api_protection()
+        
         # Insert our chain at the end of INPUT (after Docker rules)
         # Check if jump already exists to avoid duplicates
         check_result = subprocess.run(
@@ -321,6 +324,122 @@ class FirewallManager:
                     '-p', 'tcp', '--dport', str(mysql_port),
                     '-j', 'ACCEPT'
                 ])
+    
+    def apply_mysql_protection(self):
+        """Apply advanced MySQL protection with rate limiting and connection tracking"""
+        mysql_config = self.config.get('advanced.mysql', {})
+        
+        if not mysql_config.get('protection_enabled', True):
+            return
+        
+        mysql_port = mysql_config.get('port', 3306)
+        trusted_ips = mysql_config.get('trusted_ips', ['127.0.0.1'])
+        rate_limit = mysql_config.get('rate_limit', '10/s')
+        rate_limit_burst = mysql_config.get('rate_limit_burst', 40)
+        max_connections = mysql_config.get('max_connections_per_ip', 10)
+        
+        self.logger.info(f"Applying MySQL protection on port {mysql_port}")
+        
+        chain_name = f"ANTIDDOS_MYSQL_{mysql_port}"
+        self._ensure_chain(chain_name)
+        
+        # Allow trusted IPs without limits
+        for ip in trusted_ips:
+            if ip and ip.strip():
+                self.run_command([
+                    self.iptables_cmd, '-A', chain_name,
+                    '-s', ip.strip(),
+                    '-j', 'ACCEPT'
+                ])
+        
+        # Rate limit new connections
+        parts = rate_limit.split('/')
+        if len(parts) == 2:
+            limit_value, limit_unit = parts
+            self.run_command([
+                self.iptables_cmd, '-A', chain_name,
+                '-p', 'tcp', '--dport', str(mysql_port),
+                '-m', 'state', '--state', 'NEW',
+                '-m', 'limit', '--limit', rate_limit, '--limit-burst', str(rate_limit_burst),
+                '-j', 'ACCEPT'
+            ])
+        
+        # Limit concurrent connections per IP
+        self.run_command([
+            self.iptables_cmd, '-A', chain_name,
+            '-p', 'tcp', '--dport', str(mysql_port),
+            '-m', 'connlimit', '--connlimit-above', str(max_connections),
+            '-j', 'DROP'
+        ])
+        
+        # Accept established connections
+        self.run_command([
+            self.iptables_cmd, '-A', chain_name,
+            '-p', 'tcp', '--dport', str(mysql_port),
+            '-m', 'state', '--state', 'ESTABLISHED,RELATED',
+            '-j', 'ACCEPT'
+        ])
+        
+        # Drop excessive new connections
+        self.run_command([
+            self.iptables_cmd, '-A', chain_name,
+            '-p', 'tcp', '--dport', str(mysql_port),
+            '-m', 'state', '--state', 'NEW',
+            '-j', 'DROP'
+        ])
+        
+        # Jump to MySQL chain for MySQL traffic
+        self._ensure_jump(chain_name, protocol='tcp', port=mysql_port)
+        
+        self.logger.info(f"MySQL protection applied: {rate_limit} rate limit, {max_connections} max conn/IP")
+    
+    def apply_wings_api_protection(self):
+        """Apply protection for Pterodactyl Wings API"""
+        wings_config = self.config.get('advanced.wings_api', {})
+        
+        if not wings_config.get('protection_enabled', True):
+            return
+        
+        wings_port = wings_config.get('port', 8080)
+        trusted_ips = wings_config.get('trusted_ips', ['127.0.0.1'])
+        rate_limit = wings_config.get('rate_limit', '20/s')
+        rate_limit_burst = wings_config.get('rate_limit_burst', 60)
+        
+        self.logger.info(f"Applying Wings API protection on port {wings_port}")
+        
+        chain_name = f"ANTIDDOS_WINGS_{wings_port}"
+        self._ensure_chain(chain_name)
+        
+        # Allow trusted IPs
+        for ip in trusted_ips:
+            if ip and ip.strip():
+                self.run_command([
+                    self.iptables_cmd, '-A', chain_name,
+                    '-s', ip.strip(),
+                    '-j', 'ACCEPT'
+                ])
+        
+        # Rate limit
+        parts = rate_limit.split('/')
+        if len(parts) == 2:
+            self.run_command([
+                self.iptables_cmd, '-A', chain_name,
+                '-p', 'tcp', '--dport', str(wings_port),
+                '-m', 'limit', '--limit', rate_limit, '--limit-burst', str(rate_limit_burst),
+                '-j', 'ACCEPT'
+            ])
+        
+        # Drop excessive traffic
+        self.run_command([
+            self.iptables_cmd, '-A', chain_name,
+            '-p', 'tcp', '--dport', str(wings_port),
+            '-j', 'DROP'
+        ])
+        
+        # Jump to Wings chain
+        self._ensure_jump(chain_name, protocol='tcp', port=wings_port)
+        
+        self.logger.info(f"Wings API protection applied: {rate_limit} rate limit")
     
     def apply_kernel_hardening(self):
         """Apply kernel-level protections"""
