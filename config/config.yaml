@@ -133,11 +133,8 @@ services:
     duration_seconds: 1800  # 30 min de ban por servicio
   auto_discovery:
     enabled: true
-    mode: wings  # wings o docker
+    mode: docker  # wings o docker
     refresh_seconds: 60
-    wings:
-      api_url: https://dragon-01.dragonhosting.lat:8080
-      token: "5vMFCIiZ8hTwQ6D3"
     docker:
       binary: docker
   definitions:
