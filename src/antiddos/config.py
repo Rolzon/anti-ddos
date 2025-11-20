@@ -179,5 +179,35 @@ class Config:
                     }
                 },
                 'definitions': []
+            },
+            'advanced': {
+                'use_conntrack': True,
+                'max_conntrack_entries': 100000,
+                'kernel_hardening': True,
+                'allowed_ports': [3306, 5432, 6379, 22, 80, 443],
+                'mysql': {
+                    'port': 3306,
+                    'allow_server_public_ip': True,
+                    'server_public_ip': '',
+                    'max_connections_per_ip': 10,
+                    'rate_limit': '10/s',
+                    'rate_limit_burst': 40,
+                    'protection_enabled': True,
+                    'trusted_ips': ['127.0.0.1']
+                },
+                'wings_api': {
+                    'port': 8080,
+                    'protection_enabled': True,
+                    'trusted_ips': ['127.0.0.1'],
+                    'rate_limit': '20/s',
+                    'rate_limit_burst': 60
+                },
+                'strict_limits': {
+                    'enabled': True,
+                    'burst_multiplier': 3,
+                    'syn_limit': 1500,
+                    'udp_limit': 3000,
+                    'icmp_limit': 400
+                }
             }
         }

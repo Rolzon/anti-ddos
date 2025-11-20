@@ -217,6 +217,17 @@ advanced:
       - 190.57.138.18
       - 190.110.48.34
 
+  # Wings API protection
+  wings_api:
+    port: 8080
+    protection_enabled: true
+    rate_limit: "20/s"
+    rate_limit_burst: 60
+    trusted_ips:
+      - 127.0.0.1
+      - 190.57.138.18
+      - 190.110.48.34
+
   strict_limits:
     enabled: true
     burst_multiplier: 3
