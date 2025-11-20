@@ -5,15 +5,15 @@ general:
   log_level: INFO
   log_file: /var/log/antiddos/antiddos.log
   pid_file: /var/run/antiddos.pid
-  check_interval: 5  # seconds
+  check_interval: 3  # seconds - detección más rápida
 
 # Bandwidth Monitoring
 bandwidth:
   enabled: true
   interface: dr0  # Network interface to monitor
-  threshold_mbps: 250  # Trigger mitigation at this bandwidth (Mbps)
-  threshold_pps: 40000  # Trigger mitigation at this PPS
-  window_seconds: 10  # Time window for averaging
+  threshold_mbps: 250  # Trigger mitigation at this bandwidth (Mbps) - 80% de 300 Mbps
+  threshold_pps: 80000  # Trigger mitigation at this PPS para ataques grandes
+  window_seconds: 5  # Ventana corta para detección rápida
   auto_mitigate: true
 
 # Country Filtering (GeoIP)
@@ -34,7 +34,7 @@ country_filter:
     - FR
   # Trigger country filter when bandwidth exceeds threshold
   trigger_on_bandwidth: true
-  trigger_threshold_mbps: 250
+  trigger_threshold_mbps: 150  # Activar filtrado cuando haya ataque serio
 
 # Global Blacklist
 blacklist:
@@ -44,7 +44,7 @@ blacklist:
   # Automatically blacklist IPs exceeding connection limits
   auto_blacklist:
     enabled: true
-    connections_per_second: 100
+    connections_per_second: 120  # Detectar bots/floods rápido
     duration_seconds: 3600  # Ban for 1 hour
 
 # DoS Filter
@@ -53,12 +53,12 @@ dos_filter:
   # SYN flood protection
   syn_flood:
     enabled: true
-    threshold: 50  # connections per second per IP
+    threshold: 40  # connections per second per IP - equilibrado
     action: drop
   # UDP flood protection
   udp_flood:
     enabled: true
-    threshold: 100  # packets per second per IP
+    threshold: 80  # packets per second per IP - Minecraft usa UDP
     action: drop
   # ICMP flood protection
   icmp_flood:
@@ -68,7 +68,7 @@ dos_filter:
   # Connection limit per IP
   connection_limit:
     enabled: true
-    max_connections: 50
+    max_connections: 40  # Por IP global
     action: drop
 
 # SSH Protection (Fail2ban-like)
@@ -120,16 +120,18 @@ whitelist:
 # Service-specific monitoring (Docker/Pterodactyl)
 services:
   enabled: true
-  default_threshold_mbps: 25
-  default_threshold_pps: 400
+  default_threshold_mbps: 8  # Máximo por servidor individual - margen para evitar lag
+  default_threshold_pps: 600  # PPS por servidor (Minecraft típico)
   status_file: /var/run/antiddos/service_stats.json
+  window_seconds: 5  # Ventana corta = detección rápida
+  recovery_cycles: 5  # Confirmar recuperación antes de quitar mitigación
   auto_rate_limit:
     enabled: true
-    limit_pps: 100
+    limit_pps: 400  # Límite por puerto durante ataque
   auto_blacklist:
     enabled: true
-    min_connections: 80
-    duration_seconds: 3600
+    min_connections: 100  # Bloquear IPs con tráfico sospechoso por servicio
+    duration_seconds: 1800  # 30 min de ban por servicio
   auto_discovery:
     enabled: true
     mode: wings  # wings o docker
@@ -213,9 +215,9 @@ advanced:
     allow_server_public_ip: true
     server_public_ip: "190.57.138.18"
     # Connection limits
-    max_connections_per_ip: 10
-    rate_limit: "10/s"
-    rate_limit_burst: 40
+    max_connections_per_ip: 15  # Suficiente para apps normales
+    rate_limit: "15/s"  # Rate limit balanceado
+    rate_limit_burst: 50
     protection_enabled: true
     trusted_ips:
       - 127.0.0.1
@@ -226,8 +228,8 @@ advanced:
   wings_api:
     port: 8080
     protection_enabled: true
-    rate_limit: "20/s"
-    rate_limit_burst: 60
+    rate_limit: "30/s"  # Wings API necesita más requests
+    rate_limit_burst: 100
     trusted_ips:
       - 127.0.0.1
       - 190.57.138.18
@@ -235,7 +237,7 @@ advanced:
 
   strict_limits:
     enabled: true
-    burst_multiplier: 3
-    syn_limit: 1500
-    udp_limit: 3000
-    icmp_limit: 400
+    burst_multiplier: 3  # Balance entre protección y false positives
+    syn_limit: 2000  # Para 300 Mbps
+    udp_limit: 4000  # UDP crítico para Minecraft
+    icmp_limit: 500  # ICMP moderado
