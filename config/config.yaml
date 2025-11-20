@@ -10,9 +10,9 @@ general:
 # Bandwidth Monitoring
 bandwidth:
   enabled: true
-  interface: eth0  # Network interface to monitor
-  threshold_mbps: 400  # Trigger mitigation at this bandwidth (Mbps)
-  threshold_pps: 60000  # Trigger mitigation at this PPS
+  interface: dr0  # Network interface to monitor
+  threshold_mbps: 250  # Trigger mitigation at this bandwidth (Mbps)
+  threshold_pps: 40000  # Trigger mitigation at this PPS
   window_seconds: 10  # Time window for averaging
   auto_mitigate: true
 
@@ -34,7 +34,7 @@ country_filter:
     - FR
   # Trigger country filter when bandwidth exceeds threshold
   trigger_on_bandwidth: true
-  trigger_threshold_mbps: 500
+  trigger_threshold_mbps: 250
 
 # Global Blacklist
 blacklist:
@@ -76,7 +76,7 @@ ssh_protection:
   enabled: true
   log_file: /var/log/auth.log
   max_attempts: 2
-  ban_time: 3600  # seconds (1 hour)
+  ban_time: 21600  # seconds (1 hour)
   find_time: 600  # seconds (10 minutes)
   # Custom banner to show on failed attempts
   banner: |
@@ -108,6 +108,11 @@ whitelist:
   ips:
     - 127.0.0.1
     - ::1
+    - 217.216.64.51
+    - 147.93.147.175
+    - 190.57.138.18
+    - 190.110.48.34
+
     # Add your trusted IPs here
     # - 1.2.3.4
   file: /etc/antiddos/whitelist.txt
@@ -151,19 +156,19 @@ notifications:
   # Discord notifications (recommended)
   discord:
     enabled: true
-    # Único webhook para todas las alertas (clientes + administración)
-    webhook_url: "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN"
+    # Ãšnico webhook para todas las alertas (clientes + administraciÃ³n)
+    webhook_url: "https://discord.com/api/webhooks/1437262661199986750/BtoGq7zNOaYosRg_LviFwkIis1E74gC6zuRkMnvkKEqo8Xzr2b422j0wmJlFdytOVuV3"
 
-    # Opcional: menciona un rol cuando el ataque sea crítico
-    mention_role: ""  # Example: "123456789012345678"
+    # Opcional: menciona un rol cuando el ataque sea crÃ­tico
+    mention_role: "1124505068926943285"  # Example: "123456789012345678"
 
-    # Ajustes de notificación
+    # Ajustes de notificaciÃ³n
     notify_attacks: true          # Alertar cuando se detecten ataques DDoS
-    notify_mitigations: true      # Avisar al activar/desactivar mitigación
+    notify_mitigations: true      # Avisar al activar/desactivar mitigaciÃ³n
     notify_blocks: true           # Avisar cuando se bloquean IPs
     notify_unblocks: false        # Avisar cuando se desbloquean IPs
 
-    # Programación de reportes
+    # ProgramaciÃ³n de reportes
     send_daily_report: true       # Enviar resumen diario
     report_time: "09:00"          # Hora del reporte (24h)
   
