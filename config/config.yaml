@@ -11,8 +11,8 @@ general:
 bandwidth:
   enabled: true
   interface: eth0  # Network interface to monitor
-  threshold_mbps: 1000  # Trigger mitigation at this bandwidth (Mbps)
-  threshold_pps: 100000  # Trigger mitigation at this PPS
+  threshold_mbps: 400  # Trigger mitigation at this bandwidth (Mbps)
+  threshold_pps: 60000  # Trigger mitigation at this PPS
   window_seconds: 10  # Time window for averaging
   auto_mitigate: true
 
@@ -116,15 +116,15 @@ whitelist:
 services:
   enabled: true
   default_threshold_mbps: 25
-  default_threshold_pps: 800
+  default_threshold_pps: 400
   status_file: /var/run/antiddos/service_stats.json
   auto_rate_limit:
     enabled: true
-    limit_pps: 200
+    limit_pps: 100
   auto_blacklist:
     enabled: true
-    min_connections: 200
-    duration_seconds: 1800
+    min_connections: 80
+    duration_seconds: 3600
   auto_discovery:
     enabled: true
     mode: wings  # wings o docker
