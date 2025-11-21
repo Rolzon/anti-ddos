@@ -268,6 +268,18 @@ class FirewallManager:
 
         self._ensure_chain(chain_name)
 
+        whitelist_cfg = self.config.get('whitelist', {}) or {}
+        whitelist_ips = whitelist_cfg.get('ips', []) or []
+        for ip in whitelist_ips:
+            ip = (ip or '').strip()
+            if not ip:
+                continue
+            self.run_command([
+                self.iptables_cmd, '-A', chain_name,
+                '-s', ip,
+                '-j', 'RETURN'
+            ])
+
         # Allow limited traffic then drop the rest
         self.run_command([
             self.iptables_cmd, '-A', chain_name,
