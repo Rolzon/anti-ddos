@@ -331,6 +331,7 @@ class AntiDDoSMonitor:
                     actions.append(
                         f"Puerto {service.port}/{service.protocol} bloqueado (>={min_pps} PPS)"
                     )
+                    self.discord.notify_port_blocked(service.display_name, service.port, service.protocol, stats.total_pps)
 
         auto_blacklist_cfg = self.config.get('services.auto_blacklist', {})
         if auto_blacklist_cfg.get('enabled', True) and stats.top_attackers:

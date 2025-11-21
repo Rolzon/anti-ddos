@@ -184,6 +184,43 @@ class DiscordNotifier:
         elif self.webhook_url:
             self._send_webhook(self.webhook_url, embed)
 
+    def notify_port_blocked(self, service_name: str, port: int, protocol: str, total_pps: int):
+        """Notify when a service's port gets fully blocked (e.g., UDP flood)"""
+        if not self.notify_blocks:
+            return
+
+        embed = {
+            "title": "⛔ Puerto bloqueado",
+            "description": (
+                f"Se bloqueó **{service_name}** porque {protocol.upper()} {port} superó el umbral configurado."
+            ),
+            "color": self._get_color(AlertLevel.DANGER),
+            "fields": [
+                {
+                    "name": "🔌 Puerto",
+                    "value": f"{port}/{protocol.lower()}",
+                    "inline": True
+                },
+                {
+                    "name": "📈 PPS detectados",
+                    "value": f"{total_pps:,}",
+                    "inline": True
+                },
+                {
+                    "name": "🕐 Hora",
+                    "value": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "inline": False
+                }
+            ],
+            "footer": {"text": "Sistema Anti-DDoS"},
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+        if self.admin_channel:
+            self._send_webhook(self.admin_channel, embed)
+        elif self.webhook_url:
+            self._send_webhook(self.webhook_url, embed)
+
     def notify_service_attack(self, service_name: str, stats, actions: List[str]):
         """Notify when a specific service exceeds thresholds"""
         if not self.notify_attacks:
