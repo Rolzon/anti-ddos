@@ -306,23 +306,90 @@ class AntiDDoSMonitor:
                 else:
                     state['cooldown'] = 0
 
+    def _analyze_attack_pattern(self, stats) -> bool:
+        """
+        Analiza el patrón de tráfico para determinar si es un ataque DDoS real
+        o simplemente tráfico gaming legítimo alto
+        
+        Returns:
+            True si es un ataque DDoS real, False si es tráfico legítimo
+        """
+        if not stats.top_attackers:
+            return False
+        
+        # Criterio 1: Distribución de tráfico
+        # Un ataque DDoS típico tiene MUCHAS IPs con POCAS conexiones cada una
+        # Gaming legítimo tiene POCAS IPs con tráfico distribuido normalmente
+        total_unique_ips = len(stats.top_attackers)
+        
+        if total_unique_ips < 10:
+            # Menos de 10 IPs únicas = probablemente gaming legítimo
+            self.logger.debug(f"Patrón legítimo: solo {total_unique_ips} IPs únicas")
+            return False
+        
+        # Criterio 2: Conexiones por IP
+        # Calcular promedio y detectar si hay muchas IPs con conexiones anormales
+        connections_per_ip = [conns for _, conns in stats.top_attackers]
+        avg_connections = sum(connections_per_ip) / len(connections_per_ip)
+        max_connections = max(connections_per_ip)
+        
+        # Si hay IPs con 3x+ el promedio, es sospechoso
+        suspicious_ips = sum(1 for conns in connections_per_ip if conns > avg_connections * 3)
+        
+        if suspicious_ips > total_unique_ips * 0.2:  # Más del 20% de IPs son sospechosas
+            self.logger.warning(
+                f"Patrón de ataque detectado: {suspicious_ips}/{total_unique_ips} IPs sospechosas "
+                f"(avg: {avg_connections:.1f}, max: {max_connections})"
+            )
+            return True
+        
+        # Criterio 3: PPS por IP
+        # Gaming legítimo: 20-200 PPS por jugador
+        # Bot/Attack: >500 PPS por IP
+        if stats.total_pps > 0 and total_unique_ips > 0:
+            pps_per_ip = stats.total_pps / total_unique_ips
+            if pps_per_ip > 500:
+                self.logger.warning(f"PPS por IP alto: {pps_per_ip:.0f} - posible ataque")
+                return True
+        
+        # Si llegamos aquí, probablemente es tráfico legítimo alto
+        self.logger.debug(
+            f"Tráfico alto pero patrón legítimo: {total_unique_ips} IPs, "
+            f"avg {avg_connections:.1f} conn/IP, {stats.total_pps} PPS total"
+        )
+        return False
+    
     def _handle_service_attack(self, service, stats, state):
         """Apply targeted mitigation for a specific service"""
         actions = []
         
-        # PASO 1: BANEAR IPS ATACANTES PRIMERO (más específico, menos disruptivo)
+        # ANÁLISIS: ¿Es ataque real o solo tráfico alto legítimo?
+        is_real_attack = self._analyze_attack_pattern(stats)
+        
+        # PASO 1: BANEAR IPS ATACANTES - Solo si es ataque confirmado
         auto_blacklist_cfg = self.config.get('services.auto_blacklist', {})
-        if auto_blacklist_cfg.get('enabled', True) and stats.top_attackers:
-            min_connections = int(auto_blacklist_cfg.get('min_connections', 200))
-            duration = auto_blacklist_cfg.get('duration_seconds', 1800)
+        if auto_blacklist_cfg.get('enabled', True) and stats.top_attackers and is_real_attack:
+            min_connections = int(auto_blacklist_cfg.get('min_connections', 30))
+            duration = auto_blacklist_cfg.get('duration_seconds', 3600)
             banned_count = 0
-            for ip, connections in stats.top_attackers:
+            
+            # Banear solo las IPs más sospechosas (top 20% de atacantes)
+            top_20_percent = max(1, len(stats.top_attackers) // 5)
+            
+            for ip, connections in stats.top_attackers[:top_20_percent]:
                 if connections < min_connections:
                     continue
+                    
+                # Verificar que no está en whitelist
+                whitelist_ips = self.config.get('whitelist.ips', [])
+                if ip in whitelist_ips:
+                    self.logger.info(f"IP {ip} en whitelist - no se bloquea ({connections} conexiones)")
+                    continue
+                
                 if self.blacklist.add_to_blacklist(
                     ip,
                     reason=(
-                        f"Servicio {service.display_name} excedió {connections} conexiones"
+                        f"Servicio {service.display_name} excedió {connections} conexiones (ataque detectado)"
                     ),
                     duration=duration,
                 ):
@@ -331,50 +398,64 @@ class AntiDDoSMonitor:
                     banned_count += 1
             
             if banned_count > 0:
-                self.logger.info(f"Bloqueadas {banned_count} IPs atacantes en {service.display_name}")
+                self.logger.warning(f"Bloqueadas {banned_count} IPs atacantes en {service.display_name} (patrón de ataque confirmado)")
         
-        # PASO 2: Para UDP, banear IPs con menos conexiones si el ataque es intenso
+        # PASO 2: Para UDP, banear IPs SOLO si es ataque MASIVO confirmado
         udp_block_cfg = self.config.get('services.auto_udp_block', {})
         is_udp = (service.protocol or 'tcp').lower() == 'udp'
-        if service.port and is_udp and udp_block_cfg.get('enabled', False):
-            ban_threshold = int(udp_block_cfg.get('ban_connection_threshold', 1))
+        min_pps_for_udp_blocking = int(udp_block_cfg.get('min_pps', 5000))
+        
+        if service.port and is_udp and udp_block_cfg.get('enabled', False) and stats.total_pps >= min_pps_for_udp_blocking:
+            ban_threshold = int(udp_block_cfg.get('ban_connection_threshold', 20))
             ban_duration = int(udp_block_cfg.get('ban_duration_seconds', 1800))
+            self.logger.warning(f"Ataque UDP masivo detectado en {service.display_name}: {stats.total_pps} PPS")
+            
             for ip, connections in stats.top_attackers:
                 if connections < ban_threshold:
                     continue
-                # Evitar duplicados
-                if ip not in self.blocked_ips_in_attack:
+                # Evitar duplicados y whitelist
+                if ip not in self.blocked_ips_in_attack and ip not in self.config.get('whitelist.ips', []):
                     if self.blacklist.add_to_blacklist(
                         ip,
                         reason=(
-                            f"UDP {service.display_name} excedió {connections} conexiones"
+                            f"UDP {service.display_name} ataque masivo: {connections} conexiones ({stats.total_pps} PPS total)"
                         ),
                         duration=ban_duration,
                     ):
                         self.blocked_ips_in_attack.append(ip)
                         actions.append(
-                            f"IP {ip} bloqueada por UDP ({connections} conexiones)"
+                            f"IP {ip} bloqueada por ataque UDP masivo ({connections} conexiones)"
                         )
         
-        # PASO 3: Aplicar rate limiting al puerto (menos agresivo que bloqueo total)
+        # PASO 3: Rate limiting ESCALONADO (solo si ataque confirmado)
         rate_limit_cfg = self.config.get('services.auto_rate_limit', {})
-        if service.port and rate_limit_cfg.get('enabled', True) and not state.get('rate_limited'):
-            limit_pps = int(service.rate_limit_pps or rate_limit_cfg.get('limit_pps', 20000))
+        if service.port and rate_limit_cfg.get('enabled', True) and not state.get('rate_limited') and is_real_attack:
+            # Rate limit proporcional a la severidad del ataque
+            base_limit = int(service.rate_limit_pps or rate_limit_cfg.get('limit_pps', 1500))
+            
+            # Si el ataque es muy severo, reducir el límite
+            if stats.total_pps > 10000:
+                limit_pps = base_limit // 2  # Límite más restrictivo
+                self.logger.warning(f"Ataque SEVERO detectado: aplicando rate limit restrictivo ({limit_pps} PPS)")
+            else:
+                limit_pps = base_limit  # Límite normal
+            
             self.firewall.apply_port_rate_limit(service.port, service.protocol, limit_pps)
             state['rate_limited'] = True
             actions.append(
-                f"Límite {service.port}/{service.protocol} aplicado ({limit_pps} PPS)"
+                f"Rate limit {service.port}/{service.protocol}: {limit_pps} PPS (ataque confirmado)"
             )
         
-        # PASO 4: ÚLTIMO RECURSO - Bloquear puerto completo solo si el PPS es extremo
+        # PASO 4: ÚLTIMO RECURSO - Bloquear puerto SOLO para ataques extremos
+        # NOTA: Esto se activa solo si el PPS es EXTREMADAMENTE alto (más de 10k)
         if is_udp and udp_block_cfg.get('enabled', False):
-            min_pps = int(udp_block_cfg.get('min_pps', 2000))
-            # Bloquear puerto si el PPS es extremadamente alto (último recurso)
-            if stats.total_pps >= min_pps and not state.get('port_blocked'):
+            extreme_pps = min_pps_for_udp_blocking * 2  # Por ejemplo, 10000 PPS
+            if stats.total_pps >= extreme_pps and not state.get('port_blocked'):
+                self.logger.critical(f"ATAQUE EXTREMO: {stats.total_pps} PPS en {service.display_name}")
                 if self.firewall.block_port(service.port, service.protocol):
                     state['port_blocked'] = True
                     actions.append(
-                        f"Puerto {service.port}/{service.protocol} bloqueado completamente (>={min_pps} PPS - último recurso)"
+                        f"Puerto {service.port}/{service.protocol} bloqueado (ataque extremo: {stats.total_pps} PPS)"
                     )
                     self.discord.notify_port_blocked(service.display_name, service.port, service.protocol, stats.total_pps)
 
@@ -519,6 +600,15 @@ class AntiDDoSMonitor:
     def stop(self):
         """Stop the monitoring daemon"""
         self.running = False
+        self.logger.info("Anti-DDoS Monitor stopping - cleaning up firewall rules")
+        
+        # CRÍTICO: Limpiar reglas de firewall al detener el servicio
+        try:
+            self.firewall.cleanup()
+            self.logger.info("Firewall rules cleaned up successfully")
+        except Exception as e:
+            self.logger.error(f"Error cleaning up firewall: {e}")
+        
         self.logger.info("Anti-DDoS Monitor stopped")
         sys.exit(0)
 

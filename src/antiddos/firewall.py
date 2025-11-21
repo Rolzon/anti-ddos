@@ -532,38 +532,37 @@ class FirewallManager:
                 self.logger.warning(f"Failed to set {key}: {e}")
     
     def apply_dos_filters(self):
-        """Apply DoS protection filters"""
-        self.logger.info("Applying DoS filters")
+        """Apply DoS protection filters - SOLO para tráfico NO-Pterodactyl"""
+        self.logger.info("Applying DoS filters (Pterodactyl traffic bypassed)")
         
-        # SYN flood protection
+        # IMPORTANTE: Estos filtros NO afectan tráfico de Docker/Pterodactyl
+        # porque las excepciones se aplican ANTES en la cadena INPUT
+        
+        # SYN flood protection - POR IP
         if self.config.get('dos_filter.syn_flood.enabled', True):
             threshold = self.config.get('dos_filter.syn_flood.threshold', 50)
             self.run_command([
                 self.iptables_cmd, '-A', self.chain_name,
                 '-p', 'tcp', '--syn',
-                '-m', 'limit', '--limit', f'{threshold}/s', '--limit-burst', str(threshold * 2),
-                '-j', 'ACCEPT'
+                '-m', 'connlimit', '--connlimit-above', str(threshold), '--connlimit-mask', '32',
+                '-j', 'REJECT', '--reject-with', 'tcp-reset'
             ])
-            self.run_command([
-                self.iptables_cmd, '-A', self.chain_name,
-                '-p', 'tcp', '--syn',
-                '-j', 'DROP'
-            ])
+            self.logger.info(f"SYN flood protection: max {threshold} SYN per IP")
         
-        # UDP flood protection
+        # UDP flood protection - MUY PERMISIVO para Minecraft
+        # NOTA: El rate limiting de UDP se maneja mejor por servicio individual
         if self.config.get('dos_filter.udp_flood.enabled', True):
             threshold = self.config.get('dos_filter.udp_flood.threshold', 100)
+            # Solo aplicar límite global extremadamente alto para evitar saturación del servidor
+            # No limitar por IP porque Minecraft puede generar mucho tráfico legítimo
             self.run_command([
                 self.iptables_cmd, '-A', self.chain_name,
                 '-p', 'udp',
-                '-m', 'limit', '--limit', f'{threshold}/s', '--limit-burst', str(threshold * 2),
+                '-m', 'limit', '--limit', f'{threshold * 10}/s', '--limit-burst', str(threshold * 20),
                 '-j', 'ACCEPT'
             ])
-            self.run_command([
-                self.iptables_cmd, '-A', self.chain_name,
-                '-p', 'udp',
-                '-j', 'DROP'
-            ])
+            # NO DROP - permitir todo UDP que pase el límite global
+            self.logger.info(f"UDP flood protection: global limit {threshold * 10}/s (permisivo para gaming)")
         
         # ICMP flood protection
         if self.config.get('dos_filter.icmp_flood.enabled', True):
@@ -580,15 +579,16 @@ class FirewallManager:
                 '-j', 'DROP'
             ])
         
-        # Connection limit per IP
+        # Connection limit per IP - SOLO TCP
         if self.config.get('dos_filter.connection_limit.enabled', True):
             max_conn = self.config.get('dos_filter.connection_limit.max_connections', 50)
             self.run_command([
                 self.iptables_cmd, '-A', self.chain_name,
                 '-p', 'tcp',
-                '-m', 'connlimit', '--connlimit-above', str(max_conn),
+                '-m', 'connlimit', '--connlimit-above', str(max_conn), '--connlimit-mask', '32',
                 '-j', 'REJECT', '--reject-with', 'tcp-reset'
             ])
+            self.logger.info(f"TCP connection limit: {max_conn} per IP")
     
     def apply_strict_limits(self):
         """Apply stricter rate limits during attack"""
@@ -747,13 +747,45 @@ class FirewallManager:
         """Remove all firewall rules - SAFE cleanup that preserves Docker/Pterodactyl"""
         self.logger.info("Cleaning up firewall rules (preserving Docker/Pterodactyl)")
         
-        # Remove jump to our chain
-        self.run_command([self.iptables_cmd, '-D', 'INPUT', '-j', self.chain_name])
+        # Remove jump to our chain from INPUT
+        while True:
+            result = subprocess.run(
+                [self.iptables_cmd, '-D', 'INPUT', '-j', self.chain_name],
+                capture_output=True,
+                check=False
+            )
+            if result.returncode != 0:
+                break
+        
+        # Remove jump to our chain from FORWARD
+        while True:
+            result = subprocess.run(
+                [self.iptables_cmd, '-D', 'FORWARD', '-j', self.chain_name],
+                capture_output=True,
+                check=False
+            )
+            if result.returncode != 0:
+                break
         
         # Flush and delete our chain ONLY
         self.run_command([self.iptables_cmd, '-F', self.chain_name])
         self.run_command([self.iptables_cmd, '-X', self.chain_name])
         
-        # IMPORTANT: DO NOT touch DOCKER chains, NAT table, or FORWARD chain
+        # Also clean up any per-port chains we created
+        chain_list_result = subprocess.run(
+            [self.iptables_cmd, '-L', '-n'],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        if chain_list_result.returncode == 0:
+            for line in chain_list_result.stdout.split('\n'):
+                if f'{self.chain_name}_PORT_' in line or f'{self.chain_name}_' in line:
+                    chain_name = line.split()[1] if len(line.split()) > 1 else None
+                    if chain_name and chain_name.startswith(self.chain_name):
+                        self.run_command([self.iptables_cmd, '-F', chain_name])
+                        self.run_command([self.iptables_cmd, '-X', chain_name])
+        
+        # IMPORTANT: DO NOT touch DOCKER chains, NAT table, or base FORWARD chain
         # Docker and Pterodactyl Wings manage these automatically
         self.logger.info("Cleanup completed - Docker/Pterodactyl rules preserved")

@@ -7,14 +7,14 @@ general:
   pid_file: /var/run/antiddos.pid
   check_interval: 3  # seconds - detección más rápida
 
-# Bandwidth Monitoring
+# Bandwidth Monitoring - PROTECCIÓN GLOBAL
 bandwidth:
   enabled: true
   interface: dr0  # Network interface to monitor
-  threshold_mbps: 250  # Trigger mitigation at this bandwidth (Mbps) - 80% de 300 Mbps
-  threshold_pps: 80000  # Trigger mitigation at this PPS para ataques grandes
-  window_seconds: 5  # Ventana corta para detección rápida
-  auto_mitigate: true
+  threshold_mbps: 200  # Trigger mitigation at this bandwidth (Mbps) - Umbral realista para ataque
+  threshold_pps: 50000  # Trigger mitigation at this PPS - Ataques DDoS típicos >50k PPS
+  window_seconds: 10  # Ventana para confirmar ataque real, no pico momentáneo
+  auto_mitigate: true  # Activar mitigación automática global
 
 # Country Filtering (GeoIP)
 country_filter:
@@ -36,39 +36,40 @@ country_filter:
   trigger_on_bandwidth: true
   trigger_threshold_mbps: 150  # Activar filtrado cuando haya ataque serio
 
-# Global Blacklist
+# Global Blacklist - PROTECCIÓN ACTIVA
 blacklist:
   enabled: true
   file: /etc/antiddos/blacklist.txt
   auto_save: true
-  # Automatically blacklist IPs exceeding connection limits
+  # Automatically blacklist IPs exceeding connection limits (GLOBAL)
   auto_blacklist:
     enabled: true
-    connections_per_second: 120  # Detectar bots/floods rápido
+    connections_per_second: 80  # 80 conexiones/segundo por IP = ataque claro
     duration_seconds: 3600  # Ban for 1 hour
 
-# DoS Filter
+# DoS Filter - OPTIMIZADO PARA GAMING SERVERS
 dos_filter:
   enabled: true
-  # SYN flood protection
+  # SYN flood protection - POR IP no global
   syn_flood:
     enabled: true
-    threshold: 40  # connections per second per IP - equilibrado
+    threshold: 100  # conexiones SYN simultáneas por IP (más permisivo para gaming)
     action: drop
-  # UDP flood protection
+  # UDP flood protection - MUY PERMISIVO para Minecraft/Gaming
+  # NOTA: El límite global es threshold * 10 en el código (1000/s)
   udp_flood:
     enabled: true
-    threshold: 80  # packets per second per IP - Minecraft usa UDP
+    threshold: 100  # base para cálculo del límite global
     action: drop
   # ICMP flood protection
   icmp_flood:
     enabled: true
     threshold: 10  # packets per second per IP
     action: drop
-  # Connection limit per IP
+  # Connection limit per IP - SOLO TCP, no afecta UDP gaming
   connection_limit:
     enabled: true
-    max_connections: 40  # Por IP global
+    max_connections: 100  # Por IP - más permisivo para evitar false positives
     action: drop
 
 # SSH Protection (Fail2ban-like)
@@ -115,26 +116,32 @@ whitelist:
     # - 1.2.3.4
   file: /etc/antiddos/whitelist.txt
 
-# Service-specific monitoring (Docker/Pterodactyl)
+# Service-specific monitoring (Docker/Pterodactyl) - BALANCEADO GAMING + PROTECCIÓN
 services:
   enabled: true
-  default_threshold_mbps: 8  # Máximo por servidor individual - margen para evitar lag
-  default_threshold_pps: 500  # PPS por servidor reducido para detección más temprana
+  default_threshold_mbps: 20  # Margen para gaming normal (20-30 jugadores)
+  default_threshold_pps: 2000  # Threshold alto para evitar false positives
   status_file: /var/run/antiddos/service_stats.json
-  window_seconds: 5  # Ventana corta = detección rápida
+  window_seconds: 10  # Ventana para evitar picos momentáneos
   recovery_cycles: 5  # Confirmar recuperación antes de quitar mitigación
   default_interface: dr0  # NIC del host donde llegan las conexiones
+  
+  # Rate limiting inteligente - SOLO durante ataque confirmado
   auto_rate_limit:
-    enabled: true
-    limit_pps: 400  # Límite por puerto durante ataque
+    enabled: true  # Activo pero con threshold alto
+    limit_pps: 1500  # Límite alto para permitir gaming normal
+    
+  # UDP blocking selectivo - SOLO para ataques masivos
   auto_udp_block:
-    enabled: true
-    min_pps: 800  # Si un servicio UDP supera este PPS, se activa detección agresiva (reducido para detección temprana)
-    ban_connection_threshold: 5  # Banear IPs con 5+ conexiones durante ataque (equilibrado)
-    ban_duration_seconds: 3600  # Duración del ban (1 hora)
+    enabled: true  # Activo pero con threshold MUY alto
+    min_pps: 5000  # Solo activar si es ataque MASIVO (50+ jugadores no generan esto)
+    ban_connection_threshold: 20  # Banear IPs con 20+ conexiones (sospechoso)
+    ban_duration_seconds: 1800  # 30 minutos (más corto para evitar bloqueos permanentes)
+    
+  # Blacklist automático para IPs maliciosas
   auto_blacklist:
     enabled: true
-    min_connections: 10  # Bloquear IPs con 10+ conexiones simultáneas (CRÍTICO: reducido de 100)
+    min_connections: 30  # Balance: 30+ conexiones simultáneas es sospechoso
     duration_seconds: 3600  # 1 hora de ban por servicio
   auto_discovery:
     enabled: true
@@ -235,9 +242,10 @@ advanced:
       - 190.57.138.18
       - 190.110.48.34
 
+  # Strict limits - ACTIVADO DURANTE ATAQUES CONFIRMADOS
   strict_limits:
     enabled: true
     burst_multiplier: 3  # Balance entre protección y false positives
-    syn_limit: 2000  # Para 300 Mbps
-    udp_limit: 4000  # UDP crítico para Minecraft
+    syn_limit: 3000  # Límite global durante ataque - permite gaming concurrente
+    udp_limit: 10000  # UDP alto para permitir múltiples servidores gaming
     icmp_limit: 500  # ICMP moderado
