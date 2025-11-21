@@ -309,51 +309,13 @@ class AntiDDoSMonitor:
     def _handle_service_attack(self, service, stats, state):
         """Apply targeted mitigation for a specific service"""
         actions = []
-        rate_limit_cfg = self.config.get('services.auto_rate_limit', {})
-        if service.port and rate_limit_cfg.get('enabled', True):
-            limit_pps = int(service.rate_limit_pps or rate_limit_cfg.get('limit_pps', 20000))
-            self.firewall.apply_port_rate_limit(service.port, service.protocol, limit_pps)
-            state['rate_limited'] = True
-            actions.append(
-                f"Límite {service.port}/{service.protocol} aplicado ({limit_pps} PPS)"
-            )
-
-        udp_block_cfg = self.config.get('services.auto_udp_block', {})
-        if (
-            service.port and
-            (service.protocol or 'tcp').lower() == 'udp' and
-            udp_block_cfg.get('enabled', False)
-        ):
-            min_pps = int(udp_block_cfg.get('min_pps', 2000))
-            if stats.total_pps >= min_pps and not state.get('port_blocked'):
-                if self.firewall.block_port(service.port, service.protocol):
-                    state['port_blocked'] = True
-                    actions.append(
-                        f"Puerto {service.port}/{service.protocol} bloqueado (>={min_pps} PPS)"
-                    )
-                    self.discord.notify_port_blocked(service.display_name, service.port, service.protocol, stats.total_pps)
-
-            ban_threshold = int(udp_block_cfg.get('ban_connection_threshold', 1))
-            ban_duration = int(udp_block_cfg.get('ban_duration_seconds', 1800))
-            for ip, connections in stats.top_attackers:
-                if connections < ban_threshold:
-                    continue
-                if self.blacklist.add_to_blacklist(
-                    ip,
-                    reason=(
-                        f"UDP {service.display_name} excedió {connections} conexiones"
-                    ),
-                    duration=ban_duration,
-                ):
-                    self.blocked_ips_in_attack.append(ip)
-                    actions.append(
-                        f"IP {ip} bloqueada por UDP ({connections} conexiones)"
-                    )
-
+        
+        # PASO 1: BANEAR IPS ATACANTES PRIMERO (más específico, menos disruptivo)
         auto_blacklist_cfg = self.config.get('services.auto_blacklist', {})
         if auto_blacklist_cfg.get('enabled', True) and stats.top_attackers:
             min_connections = int(auto_blacklist_cfg.get('min_connections', 200))
             duration = auto_blacklist_cfg.get('duration_seconds', 1800)
+            banned_count = 0
             for ip, connections in stats.top_attackers:
                 if connections < min_connections:
                     continue
@@ -366,6 +328,55 @@ class AntiDDoSMonitor:
                 ):
                     self.blocked_ips_in_attack.append(ip)
                     actions.append(f"IP {ip} bloqueada ({connections} conexiones)")
+                    banned_count += 1
+            
+            if banned_count > 0:
+                self.logger.info(f"Bloqueadas {banned_count} IPs atacantes en {service.display_name}")
+        
+        # PASO 2: Para UDP, banear IPs con menos conexiones si el ataque es intenso
+        udp_block_cfg = self.config.get('services.auto_udp_block', {})
+        is_udp = (service.protocol or 'tcp').lower() == 'udp'
+        if service.port and is_udp and udp_block_cfg.get('enabled', False):
+            ban_threshold = int(udp_block_cfg.get('ban_connection_threshold', 1))
+            ban_duration = int(udp_block_cfg.get('ban_duration_seconds', 1800))
+            for ip, connections in stats.top_attackers:
+                if connections < ban_threshold:
+                    continue
+                # Evitar duplicados
+                if ip not in self.blocked_ips_in_attack:
+                    if self.blacklist.add_to_blacklist(
+                        ip,
+                        reason=(
+                            f"UDP {service.display_name} excedió {connections} conexiones"
+                        ),
+                        duration=ban_duration,
+                    ):
+                        self.blocked_ips_in_attack.append(ip)
+                        actions.append(
+                            f"IP {ip} bloqueada por UDP ({connections} conexiones)"
+                        )
+        
+        # PASO 3: Aplicar rate limiting al puerto (menos agresivo que bloqueo total)
+        rate_limit_cfg = self.config.get('services.auto_rate_limit', {})
+        if service.port and rate_limit_cfg.get('enabled', True) and not state.get('rate_limited'):
+            limit_pps = int(service.rate_limit_pps or rate_limit_cfg.get('limit_pps', 20000))
+            self.firewall.apply_port_rate_limit(service.port, service.protocol, limit_pps)
+            state['rate_limited'] = True
+            actions.append(
+                f"Límite {service.port}/{service.protocol} aplicado ({limit_pps} PPS)"
+            )
+        
+        # PASO 4: ÚLTIMO RECURSO - Bloquear puerto completo solo si el PPS es extremo
+        if is_udp and udp_block_cfg.get('enabled', False):
+            min_pps = int(udp_block_cfg.get('min_pps', 2000))
+            # Solo bloquear puerto si el PPS es extremadamente alto Y ya intentamos banear IPs
+            if stats.total_pps >= min_pps and not state.get('port_blocked') and len(actions) > 0:
+                if self.firewall.block_port(service.port, service.protocol):
+                    state['port_blocked'] = True
+                    actions.append(
+                        f"Puerto {service.port}/{service.protocol} bloqueado completamente (>={min_pps} PPS)"
+                    )
+                    self.discord.notify_port_blocked(service.display_name, service.port, service.protocol, stats.total_pps)
 
         if actions:
             self.logger.warning(
@@ -374,9 +385,15 @@ class AntiDDoSMonitor:
 
         if not state.get('mitigation'):
             self.logger.warning(
-                f"Tráfico elevado en {service.display_name}: {stats.total_mbps:.2f} Mbps / {stats.total_pps} PPS"
+                f"Tráfico elevado en {service.display_name}: {stats.total_mbps:.2f} Mbps / {stats.total_pps} PPS | "
+                f"Conexiones: {stats.connections} | Top atacantes: {len(stats.top_attackers)}"
             )
             state['mitigation'] = True
+
+        # Log detallado de atacantes detectados para debug
+        if stats.top_attackers:
+            attacker_summary = ", ".join([f"{ip}({conns})" for ip, conns in stats.top_attackers[:3]])
+            self.logger.info(f"Top atacantes en {service.display_name}: {attacker_summary}")
 
         self.discord.notify_service_attack(service.display_name, stats, actions)
 

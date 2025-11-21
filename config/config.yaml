@@ -120,7 +120,7 @@ whitelist:
 services:
   enabled: true
   default_threshold_mbps: 8  # Máximo por servidor individual - margen para evitar lag
-  default_threshold_pps: 600  # PPS por servidor (Minecraft típico)
+  default_threshold_pps: 500  # PPS por servidor reducido para detección más temprana
   status_file: /var/run/antiddos/service_stats.json
   window_seconds: 5  # Ventana corta = detección rápida
   recovery_cycles: 5  # Confirmar recuperación antes de quitar mitigación
@@ -130,13 +130,13 @@ services:
     limit_pps: 400  # Límite por puerto durante ataque
   auto_udp_block:
     enabled: true
-    min_pps: 1200  # Si un servicio UDP supera este PPS, se bloquea totalmente (salvo whitelist)
-    ban_connection_threshold: 1  # Número de conexiones simultáneas para banear IPs detectadas
-    ban_duration_seconds: 1800  # Duración del ban (segundos)
+    min_pps: 800  # Si un servicio UDP supera este PPS, se activa detección agresiva (reducido para detección temprana)
+    ban_connection_threshold: 5  # Banear IPs con 5+ conexiones durante ataque (equilibrado)
+    ban_duration_seconds: 3600  # Duración del ban (1 hora)
   auto_blacklist:
     enabled: true
-    min_connections: 100  # Bloquear IPs con tráfico sospechoso por servicio
-    duration_seconds: 1800  # 30 min de ban por servicio
+    min_connections: 10  # Bloquear IPs con 10+ conexiones simultáneas (CRÍTICO: reducido de 100)
+    duration_seconds: 3600  # 1 hora de ban por servicio
   auto_discovery:
     enabled: true
     mode: docker  # wings o docker
@@ -223,7 +223,6 @@ advanced:
     rate_limit_burst: 50
     protection_enabled: true
     trusted_ips:
-      - 127.0.0.1
       - 190.57.138.18
       - 190.110.48.34
 
@@ -234,7 +233,6 @@ advanced:
     rate_limit: "30/s"  # Wings API necesita más requests
     rate_limit_burst: 100
     trusted_ips:
-      - 127.0.0.1
       - 190.57.138.18
       - 190.110.48.34
 

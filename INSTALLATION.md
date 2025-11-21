@@ -13,10 +13,10 @@
 
 ```bash
 # Desde tu máquina local, sube el proyecto
-scp -r anti-ddos/ usuario@tu-servidor:/root/
+scp -r anti-ddos/ usuario@tu-servidor:/opt/
 
 # O clona desde git si tienes el repo
-# git clone https://github.com/tu-usuario/anti-ddos.git
+# git clone https://github.com/tu-usuario/anti-ddos.git /opt/anti-ddos
 ```
 
 ### 2. Ejecutar script de instalación
@@ -26,7 +26,7 @@ scp -r anti-ddos/ usuario@tu-servidor:/root/
 ssh usuario@tu-servidor
 
 # Ir al directorio del proyecto
-cd /root/anti-ddos
+cd /opt/anti-ddos
 
 # Dar permisos de ejecución
 chmod +x reinstall.sh verify_installation.sh
@@ -121,7 +121,7 @@ sudo update-alternatives --set ip6tables /usr/sbin/ip6tables-nft
 ### 3. Instalar proyecto Python
 
 ```bash
-cd /root/anti-ddos
+cd /opt/anti-ddos
 sudo pip3 install -e .
 ```
 
@@ -316,7 +316,7 @@ sudo systemctl restart antiddos-monitor
 Para actualizar a una nueva versión:
 
 ```bash
-cd /root/anti-ddos
+cd /opt/anti-ddos
 git pull  # Si usas git
 sudo ./reinstall.sh
 ```
