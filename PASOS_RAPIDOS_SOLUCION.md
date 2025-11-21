@@ -86,11 +86,20 @@ sudo iptables -L ANTIDDOS -n -v | grep udp
 # Detener servicio
 sudo systemctl stop antiddos-monitor
 
-# Verificar que NO quedan reglas
-sudo iptables -L ANTIDDOS -n
+# Verificar cleanup con el script
+sudo bash scripts/verify-cleanup.sh
 
-# Debe dar error: "No chain/target/match by that name"
-# ✅ Esto confirma que el cleanup funciona correctamente
+# Debe mostrar: "✓ PASS: Cadena ANTIDDOS no existe"
+```
+
+**⚠️ Si el sistema usa nftables y ves error "incompatible, use 'nft' tool":**
+
+```bash
+# Usar limpieza manual para nftables
+sudo bash scripts/manual-cleanup-nftables.sh
+
+# Ver documentación específica:
+# docs/NFTABLES_CLEANUP_FIX.md
 ```
 
 ### Test 2: Reglas Son Permisivas

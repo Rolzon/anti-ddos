@@ -745,47 +745,116 @@ class FirewallManager:
     
     def cleanup(self):
         """Remove all firewall rules - SAFE cleanup that preserves Docker/Pterodactyl"""
-        self.logger.info("Cleaning up firewall rules (preserving Docker/Pterodactyl)")
+        self.logger.info(f"Cleaning up firewall rules using {self.iptables_cmd} (preserving Docker/Pterodactyl)")
+        
+        cleanup_success = True
         
         # Remove jump to our chain from INPUT
+        removed_input = 0
         while True:
             result = subprocess.run(
                 [self.iptables_cmd, '-D', 'INPUT', '-j', self.chain_name],
                 capture_output=True,
+                text=True,
                 check=False
             )
             if result.returncode != 0:
                 break
+            removed_input += 1
+        
+        if removed_input > 0:
+            self.logger.info(f"Removed {removed_input} jump(s) from INPUT chain")
         
         # Remove jump to our chain from FORWARD
+        removed_forward = 0
         while True:
             result = subprocess.run(
                 [self.iptables_cmd, '-D', 'FORWARD', '-j', self.chain_name],
                 capture_output=True,
+                text=True,
                 check=False
             )
             if result.returncode != 0:
                 break
+            removed_forward += 1
         
-        # Flush and delete our chain ONLY
-        self.run_command([self.iptables_cmd, '-F', self.chain_name])
-        self.run_command([self.iptables_cmd, '-X', self.chain_name])
+        if removed_forward > 0:
+            self.logger.info(f"Removed {removed_forward} jump(s) from FORWARD chain")
         
-        # Also clean up any per-port chains we created
-        chain_list_result = subprocess.run(
-            [self.iptables_cmd, '-L', '-n'],
+        # Remove jump from OUTPUT (just in case)
+        removed_output = 0
+        while True:
+            result = subprocess.run(
+                [self.iptables_cmd, '-D', 'OUTPUT', '-j', self.chain_name],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            if result.returncode != 0:
+                break
+            removed_output += 1
+        
+        if removed_output > 0:
+            self.logger.info(f"Removed {removed_output} jump(s) from OUTPUT chain")
+        
+        # Flush and delete our main chain
+        result = subprocess.run(
+            [self.iptables_cmd, '-F', self.chain_name],
             capture_output=True,
             text=True,
             check=False
         )
+        if result.returncode == 0:
+            self.logger.info(f"Flushed chain {self.chain_name}")
+        else:
+            self.logger.debug(f"Chain {self.chain_name} flush: {result.stderr.strip()}")
+        
+        result = subprocess.run(
+            [self.iptables_cmd, '-X', self.chain_name],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        if result.returncode == 0:
+            self.logger.info(f"Deleted chain {self.chain_name}")
+        else:
+            self.logger.warning(f"Failed to delete chain {self.chain_name}: {result.stderr.strip()}")
+            cleanup_success = False
+        
+        # Clean up strict chain
+        subprocess.run([self.iptables_cmd, '-F', self.strict_chain], capture_output=True, check=False)
+        subprocess.run([self.iptables_cmd, '-X', self.strict_chain], capture_output=True, check=False)
+        
+        # Also clean up any per-port chains we created
+        chain_list_result = subprocess.run(
+            [self.iptables_cmd, '-S'],  # Use -S instead of -L for better parsing
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        
+        chains_to_delete = []
         if chain_list_result.returncode == 0:
             for line in chain_list_result.stdout.split('\n'):
-                if f'{self.chain_name}_PORT_' in line or f'{self.chain_name}_' in line:
-                    chain_name = line.split()[1] if len(line.split()) > 1 else None
-                    if chain_name and chain_name.startswith(self.chain_name):
-                        self.run_command([self.iptables_cmd, '-F', chain_name])
-                        self.run_command([self.iptables_cmd, '-X', chain_name])
+                if f'-N {self.chain_name}_' in line or f'-N {self.chain_name}' in line:
+                    # Extract chain name
+                    parts = line.split()
+                    if len(parts) >= 2 and parts[0] == '-N':
+                        chain = parts[1]
+                        if chain != self.chain_name and chain.startswith(self.chain_name):
+                            chains_to_delete.append(chain)
+        
+        for chain in chains_to_delete:
+            self.logger.info(f"Cleaning up additional chain: {chain}")
+            subprocess.run([self.iptables_cmd, '-F', chain], capture_output=True, check=False)
+            subprocess.run([self.iptables_cmd, '-X', chain], capture_output=True, check=False)
         
         # IMPORTANT: DO NOT touch DOCKER chains, NAT table, or base FORWARD chain
         # Docker and Pterodactyl Wings manage these automatically
-        self.logger.info("Cleanup completed - Docker/Pterodactyl rules preserved")
+        
+        if cleanup_success:
+            self.logger.info("✓ Cleanup completed successfully - Docker/Pterodactyl rules preserved")
+        else:
+            self.logger.warning("⚠ Cleanup completed with warnings - verify manually")
+        
+        return cleanup_success
