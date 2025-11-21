@@ -160,7 +160,7 @@ class FirewallManager:
         # Apply Wings API protection if enabled
         self.apply_wings_api_protection()
         
-        # Insert our chain at the end of INPUT (after Docker rules)
+        # Insert our chain into INPUT (for traffic to host itself)
         # Check if jump already exists to avoid duplicates
         check_result = subprocess.run(
             [self.iptables_cmd, '-C', 'INPUT', '-j', self.chain_name],
@@ -169,6 +169,18 @@ class FirewallManager:
         )
         if check_result.returncode != 0:
             self.run_command([self.iptables_cmd, '-A', 'INPUT', '-j', self.chain_name])
+        
+        # CRITICAL: Insert our chain into FORWARD (for traffic to Docker containers)
+        # This MUST be before Docker rules so we can block attackers before NAT
+        check_forward = subprocess.run(
+            [self.iptables_cmd, '-C', 'FORWARD', '-j', self.chain_name],
+            capture_output=True,
+            check=False
+        )
+        if check_forward.returncode != 0:
+            # Insert at position 1 so it's evaluated before Docker ACCEPT rules
+            self.run_command([self.iptables_cmd, '-I', 'FORWARD', '1', '-j', self.chain_name])
+            self.logger.info("Added ANTIDDOS chain to FORWARD for Docker traffic filtering")
         
         # Apply kernel hardening if configured
         if self.config.get('advanced.kernel_hardening', True):
@@ -626,24 +638,42 @@ class FirewallManager:
         self.run_command([self.iptables_cmd, '-X', self.strict_chain])
     
     def block_ip(self, ip: str, reason: str = ""):
-        """Block an IP address"""
+        """Block an IP address for both host and Docker traffic"""
         self.logger.info(f"Blocking IP {ip}: {reason}")
         
+        # Block in ANTIDDOS chain (affects both INPUT and FORWARD)
         # Add to beginning of chain for immediate effect
         self.run_command([
             self.iptables_cmd, '-I', self.chain_name, '1',
             '-s', ip,
             '-j', 'DROP'
         ])
+        
+        # Also explicitly block in FORWARD before Docker rules (belt and suspenders)
+        self.run_command([
+            self.iptables_cmd, '-I', 'FORWARD', '1',
+            '-s', ip,
+            '-j', 'DROP'
+        ])
     
     def unblock_ip(self, ip: str):
-        """Unblock an IP address"""
+        """Unblock an IP address from both host and Docker traffic"""
         self.logger.info(f"Unblocking IP {ip}")
         
-        # Remove all rules matching this IP
+        # Remove all rules matching this IP from ANTIDDOS chain
         while True:
             result = subprocess.run(
                 [self.iptables_cmd, '-D', self.chain_name, '-s', ip, '-j', 'DROP'],
+                capture_output=True,
+                check=False
+            )
+            if result.returncode != 0:
+                break
+        
+        # Also remove from FORWARD chain
+        while True:
+            result = subprocess.run(
+                [self.iptables_cmd, '-D', 'FORWARD', '-s', ip, '-j', 'DROP'],
                 capture_output=True,
                 check=False
             )
