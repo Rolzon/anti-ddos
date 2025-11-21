@@ -291,6 +291,7 @@ class AntiDDoSMonitor:
                 'mitigation': False,
                 'cooldown': 0,
                 'rate_limited': False,
+                'port_blocked': False,
                 'last_alert': None,
             })
 
@@ -316,6 +317,20 @@ class AntiDDoSMonitor:
             actions.append(
                 f"Límite {service.port}/{service.protocol} aplicado ({limit_pps} PPS)"
             )
+
+        udp_block_cfg = self.config.get('services.auto_udp_block', {})
+        if (
+            service.port and
+            (service.protocol or 'tcp').lower() == 'udp' and
+            udp_block_cfg.get('enabled', False)
+        ):
+            min_pps = int(udp_block_cfg.get('min_pps', 2000))
+            if stats.total_pps >= min_pps and not state.get('port_blocked'):
+                if self.firewall.block_port(service.port, service.protocol):
+                    state['port_blocked'] = True
+                    actions.append(
+                        f"Puerto {service.port}/{service.protocol} bloqueado (>={min_pps} PPS)"
+                    )
 
         auto_blacklist_cfg = self.config.get('services.auto_blacklist', {})
         if auto_blacklist_cfg.get('enabled', True) and stats.top_attackers:
@@ -352,6 +367,10 @@ class AntiDDoSMonitor:
         if state.get('rate_limited') and service.port:
             self.firewall.remove_port_rate_limit(service.port)
             state['rate_limited'] = False
+
+        if state.get('port_blocked') and service.port:
+            self.firewall.unblock_port(service.port, service.protocol)
+            state['port_blocked'] = False
 
         state['mitigation'] = False
         state['cooldown'] = 0

@@ -161,6 +161,10 @@ class Config:
                     'enabled': True,
                     'limit_pps': 20000
                 },
+                'auto_udp_block': {
+                    'enabled': False,
+                    'min_pps': 2000
+                },
                 'auto_blacklist': {
                     'enabled': True,
                     'min_connections': 200,

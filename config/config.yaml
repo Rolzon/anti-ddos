@@ -128,6 +128,9 @@ services:
   auto_rate_limit:
     enabled: true
     limit_pps: 400  # Límite por puerto durante ataque
+  auto_udp_block:
+    enabled: true
+    min_pps: 1200  # Si un servicio UDP supera este PPS, se bloquea totalmente (salvo whitelist)
   auto_blacklist:
     enabled: true
     min_connections: 100  # Bloquear IPs con tráfico sospechoso por servicio

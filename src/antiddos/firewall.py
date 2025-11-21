@@ -223,6 +223,19 @@ class FirewallManager:
         elif flush:
             self.run_command([self.iptables_cmd, '-F', chain_name])
 
+    def _add_whitelist_bypass(self, chain_name: str):
+        whitelist_cfg = self.config.get('whitelist', {}) or {}
+        whitelist_ips = whitelist_cfg.get('ips', []) or []
+        for ip in whitelist_ips:
+            ip = (ip or '').strip()
+            if not ip:
+                continue
+            self.run_command([
+                self.iptables_cmd, '-A', chain_name,
+                '-s', ip,
+                '-j', 'RETURN'
+            ])
+
     def _ensure_jump(self, chain_name: str, protocol: Optional[str] = None, port: Optional[int] = None):
         check_cmd = [self.iptables_cmd, '-C', self.chain_name]
         insert_cmd = [self.iptables_cmd, '-I', self.chain_name, '1']
@@ -268,17 +281,7 @@ class FirewallManager:
 
         self._ensure_chain(chain_name)
 
-        whitelist_cfg = self.config.get('whitelist', {}) or {}
-        whitelist_ips = whitelist_cfg.get('ips', []) or []
-        for ip in whitelist_ips:
-            ip = (ip or '').strip()
-            if not ip:
-                continue
-            self.run_command([
-                self.iptables_cmd, '-A', chain_name,
-                '-s', ip,
-                '-j', 'RETURN'
-            ])
+        self._add_whitelist_bypass(chain_name)
 
         # Allow limited traffic then drop the rest
         self.run_command([
@@ -297,6 +300,27 @@ class FirewallManager:
 
         return True
 
+    def block_port(self, port: int, protocol: str = 'udp') -> bool:
+        """Drop all traffic to a port (except whitelist)"""
+        protocol = (protocol or 'udp').lower()
+        if protocol not in ('tcp', 'udp'):
+            self.logger.warning(f"Unsupported protocol {protocol} for port block")
+            return False
+
+        chain_name = self._get_port_chain_name(port)
+        self.logger.info(f"Blocking port {port}/{protocol} for suspicious traffic")
+
+        self._ensure_chain(chain_name)
+        self._add_whitelist_bypass(chain_name)
+
+        self.run_command([
+            self.iptables_cmd, '-A', chain_name,
+            '-j', 'DROP'
+        ])
+
+        self._ensure_jump(chain_name, protocol=protocol, port=port)
+        return True
+
     def remove_port_rate_limit(self, port: int, protocol: str = 'tcp') -> bool:
         """Remove rate limiting rules for a specific port"""
         protocol = (protocol or 'tcp').lower()
@@ -313,6 +337,10 @@ class FirewallManager:
         self.run_command([self.iptables_cmd, '-X', chain_name])
 
         return True
+
+    def unblock_port(self, port: int, protocol: str = 'tcp') -> bool:
+        """Alias for removing per-port chains"""
+        return self.remove_port_rate_limit(port, protocol)
 
     def _add_mysql_exceptions(self):
         """Add exceptions for MySQL from server public IP"""
