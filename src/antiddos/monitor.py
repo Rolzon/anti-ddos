@@ -333,6 +333,23 @@ class AntiDDoSMonitor:
                     )
                     self.discord.notify_port_blocked(service.display_name, service.port, service.protocol, stats.total_pps)
 
+            ban_threshold = int(udp_block_cfg.get('ban_connection_threshold', 1))
+            ban_duration = int(udp_block_cfg.get('ban_duration_seconds', 1800))
+            for ip, connections in stats.top_attackers:
+                if connections < ban_threshold:
+                    continue
+                if self.blacklist.add_to_blacklist(
+                    ip,
+                    reason=(
+                        f"UDP {service.display_name} excedió {connections} conexiones"
+                    ),
+                    duration=ban_duration,
+                ):
+                    self.blocked_ips_in_attack.append(ip)
+                    actions.append(
+                        f"IP {ip} bloqueada por UDP ({connections} conexiones)"
+                    )
+
         auto_blacklist_cfg = self.config.get('services.auto_blacklist', {})
         if auto_blacklist_cfg.get('enabled', True) and stats.top_attackers:
             min_connections = int(auto_blacklist_cfg.get('min_connections', 200))

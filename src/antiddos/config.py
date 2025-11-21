@@ -163,7 +163,9 @@ class Config:
                 },
                 'auto_udp_block': {
                     'enabled': False,
-                    'min_pps': 2000
+                    'min_pps': 2000,
+                    'ban_connection_threshold': 1,
+                    'ban_duration_seconds': 1800
                 },
                 'auto_blacklist': {
                     'enabled': True,
