@@ -369,12 +369,12 @@ class AntiDDoSMonitor:
         # PASO 4: ÚLTIMO RECURSO - Bloquear puerto completo solo si el PPS es extremo
         if is_udp and udp_block_cfg.get('enabled', False):
             min_pps = int(udp_block_cfg.get('min_pps', 2000))
-            # Solo bloquear puerto si el PPS es extremadamente alto Y ya intentamos banear IPs
-            if stats.total_pps >= min_pps and not state.get('port_blocked') and len(actions) > 0:
+            # Bloquear puerto si el PPS es extremadamente alto (último recurso)
+            if stats.total_pps >= min_pps and not state.get('port_blocked'):
                 if self.firewall.block_port(service.port, service.protocol):
                     state['port_blocked'] = True
                     actions.append(
-                        f"Puerto {service.port}/{service.protocol} bloqueado completamente (>={min_pps} PPS)"
+                        f"Puerto {service.port}/{service.protocol} bloqueado completamente (>={min_pps} PPS - último recurso)"
                     )
                     self.discord.notify_port_blocked(service.display_name, service.port, service.protocol, stats.total_pps)
 
