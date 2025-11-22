@@ -311,51 +311,106 @@ class AntiDDoSMonitor:
         Analiza el patrón de tráfico para determinar si es un ataque DDoS real
         o simplemente tráfico gaming legítimo alto
         
+        CRITERIOS MEJORADOS:
+        - Distingue entre burst temporal (legítimo) vs ataque sostenido
+        - Detecta puertos gaming automáticamente
+        - Usa thresholds dinámicos basados en tipo de servicio
+        - Analiza distribución estadística de conexiones
+        
         Returns:
             True si es un ataque DDoS real, False si es tráfico legítimo
         """
         if not stats.top_attackers:
             return False
         
-        # Criterio 1: Distribución de tráfico
+        # CRITERIO 0: Detección de puerto gaming
+        is_gaming_port = False
+        if hasattr(stats, 'service') and stats.service.port:
+            port = stats.service.port
+            # Rangos típicos: Minecraft (19000-30000), Source (27000-27050)
+            is_gaming_port = (
+                (19000 <= port <= 30000) or  # Minecraft/gaming range
+                (27000 <= port <= 27050) or  # Source engine
+                (25565 <= port <= 25575)     # Minecraft default range
+            )
+            if is_gaming_port:
+                self.logger.debug(f"Puerto {port} detectado como gaming - usando thresholds permisivos")
+        
+        # CRITERIO 1: Distribución de tráfico
         # Un ataque DDoS típico tiene MUCHAS IPs con POCAS conexiones cada una
         # Gaming legítimo tiene POCAS IPs con tráfico distribuido normalmente
         total_unique_ips = len(stats.top_attackers)
         
-        if total_unique_ips < 10:
-            # Menos de 10 IPs únicas = probablemente gaming legítimo
-            self.logger.debug(f"Patrón legítimo: solo {total_unique_ips} IPs únicas")
+        # Threshold dinámico: gaming ports más permisivos
+        min_ips_threshold = 25 if is_gaming_port else 15
+        
+        if total_unique_ips < min_ips_threshold:
+            # Pocas IPs = probablemente gaming legítimo
+            self.logger.debug(
+                f"Patrón legítimo: solo {total_unique_ips} IPs únicas "
+                f"(threshold: {min_ips_threshold})"
+            )
             return False
         
-        # Criterio 2: Conexiones por IP
-        # Calcular promedio y detectar si hay muchas IPs con conexiones anormales
+        # CRITERIO 2: Análisis estadístico de conexiones por IP
         connections_per_ip = [conns for _, conns in stats.top_attackers]
         avg_connections = sum(connections_per_ip) / len(connections_per_ip)
         max_connections = max(connections_per_ip)
         
-        # Si hay IPs con 3x+ el promedio, es sospechoso
-        suspicious_ips = sum(1 for conns in connections_per_ip if conns > avg_connections * 3)
+        # Calcular desviación estándar para detectar outliers
+        variance = sum((x - avg_connections) ** 2 for x in connections_per_ip) / len(connections_per_ip)
+        std_dev = variance ** 0.5
         
-        if suspicious_ips > total_unique_ips * 0.2:  # Más del 20% de IPs son sospechosas
+        # Gaming: distribución normal con outliers ocasionales
+        # Ataque: muchos outliers extremos
+        outlier_threshold = avg_connections + (3 * std_dev)  # 3 sigma
+        suspicious_ips = sum(1 for conns in connections_per_ip if conns > outlier_threshold)
+        
+        suspicious_ratio = suspicious_ips / total_unique_ips if total_unique_ips > 0 else 0
+        
+        # Para gaming, permitir hasta 30% de outliers (reconexiones normales)
+        # Para no-gaming, solo 20%
+        max_suspicious_ratio = 0.30 if is_gaming_port else 0.20
+        
+        if suspicious_ratio > max_suspicious_ratio:
             self.logger.warning(
                 f"Patrón de ataque detectado: {suspicious_ips}/{total_unique_ips} IPs sospechosas "
-                f"(avg: {avg_connections:.1f}, max: {max_connections})"
+                f"({suspicious_ratio:.1%} > {max_suspicious_ratio:.1%}, "
+                f"avg: {avg_connections:.1f}, max: {max_connections}, σ: {std_dev:.1f})"
             )
             return True
         
-        # Criterio 3: PPS por IP
-        # Gaming legítimo: 20-200 PPS por jugador
-        # Bot/Attack: >500 PPS por IP
+        # CRITERIO 3: PPS por IP con thresholds dinámicos
+        # Gaming UDP legítimo: 20-300 PPS por jugador (chunks, movimiento)
+        # Bot/Attack: >600 PPS por IP sostenido
         if stats.total_pps > 0 and total_unique_ips > 0:
             pps_per_ip = stats.total_pps / total_unique_ips
-            if pps_per_ip > 500:
-                self.logger.warning(f"PPS por IP alto: {pps_per_ip:.0f} - posible ataque")
+            
+            # Threshold dinámico según tipo
+            pps_threshold = 800 if is_gaming_port else 500
+            
+            if pps_per_ip > pps_threshold:
+                self.logger.warning(
+                    f"PPS por IP alto: {pps_per_ip:.0f} > {pps_threshold} - posible ataque"
+                )
+                return True
+        
+        # CRITERIO 4: Ratio PPS/Conexiones (detección de flood)
+        # Gaming: ~5-30 PPS por conexión
+        # Ataque: >100 PPS por conexión (flood de paquetes pequeños)
+        if stats.connections > 0:
+            pps_per_conn = stats.total_pps / stats.connections
+            if pps_per_conn > 150:  # Muy alto = flood attack
+                self.logger.warning(
+                    f"Ratio PPS/conexión anormal: {pps_per_conn:.1f} PPS/conn - posible flood"
+                )
                 return True
         
         # Si llegamos aquí, probablemente es tráfico legítimo alto
         self.logger.debug(
             f"Tráfico alto pero patrón legítimo: {total_unique_ips} IPs, "
-            f"avg {avg_connections:.1f} conn/IP, {stats.total_pps} PPS total"
+            f"avg {avg_connections:.1f} conn/IP (σ={std_dev:.1f}), "
+            f"{stats.total_pps} PPS total, gaming_port={is_gaming_port}"
         )
         return False
     
@@ -366,17 +421,18 @@ class AntiDDoSMonitor:
         # ANÁLISIS: ¿Es ataque real o solo tráfico alto legítimo?
         is_real_attack = self._analyze_attack_pattern(stats)
         
-        # PASO 1: BANEAR IPS ATACANTES - Solo si es ataque confirmado
+        # PASO 1: BANEAR IPS ATACANTES - Solo si es ataque confirmado Y muy severo
         auto_blacklist_cfg = self.config.get('services.auto_blacklist', {})
         if auto_blacklist_cfg.get('enabled', True) and stats.top_attackers and is_real_attack:
-            min_connections = int(auto_blacklist_cfg.get('min_connections', 30))
+            min_connections = int(auto_blacklist_cfg.get('min_connections', 60))  # Valor por defecto aumentado
             duration = auto_blacklist_cfg.get('duration_seconds', 3600)
             banned_count = 0
             
-            # Banear solo las IPs más sospechosas (top 20% de atacantes)
-            top_20_percent = max(1, len(stats.top_attackers) // 5)
+            # Banear solo las IPs más sospechosas (top 15% de atacantes)
+            # Reducido de 20% a 15% para ser más selectivo
+            top_15_percent = max(1, len(stats.top_attackers) // 7)
             
-            for ip, connections in stats.top_attackers[:top_20_percent]:
+            for ip, connections in stats.top_attackers[:top_15_percent]:
                 if connections < min_connections:
                     continue
                     
@@ -386,10 +442,17 @@ class AntiDDoSMonitor:
                     self.logger.info(f"IP {ip} en whitelist - no se bloquea ({connections} conexiones)")
                     continue
                 
+                # CRITERIO ADICIONAL: Solo banear si tiene conexiones ANORMALMENTE altas
+                # Calcular promedio de los top attackers
+                avg_top_conns = sum(c for _, c in stats.top_attackers[:10]) / min(10, len(stats.top_attackers))
+                if connections < avg_top_conns * 1.5:  # Debe ser 1.5x+ el promedio de top atacantes
+                    self.logger.debug(f"IP {ip} no baneada: {connections} < {avg_top_conns * 1.5:.0f} (1.5x promedio)")
+                    continue
+                
                 if self.blacklist.add_to_blacklist(
                     ip,
                     reason=(
-                        f"Servicio {service.display_name} excedió {connections} conexiones (ataque detectado)"
+                        f"Servicio {service.display_name} excedió {connections} conexiones (ataque confirmado)"
                     ),
                     duration=duration,
                 ):
@@ -403,40 +466,54 @@ class AntiDDoSMonitor:
         # PASO 2: Para UDP, banear IPs SOLO si es ataque MASIVO confirmado
         udp_block_cfg = self.config.get('services.auto_udp_block', {})
         is_udp = (service.protocol or 'tcp').lower() == 'udp'
-        min_pps_for_udp_blocking = int(udp_block_cfg.get('min_pps', 5000))
+        min_pps_for_udp_blocking = int(udp_block_cfg.get('min_pps', 8000))  # Valor por defecto aumentado
         
         if service.port and is_udp and udp_block_cfg.get('enabled', False) and stats.total_pps >= min_pps_for_udp_blocking:
-            ban_threshold = int(udp_block_cfg.get('ban_connection_threshold', 20))
+            ban_threshold = int(udp_block_cfg.get('ban_connection_threshold', 50))  # Valor por defecto aumentado
             ban_duration = int(udp_block_cfg.get('ban_duration_seconds', 1800))
             self.logger.warning(f"Ataque UDP masivo detectado en {service.display_name}: {stats.total_pps} PPS")
             
-            for ip, connections in stats.top_attackers:
-                if connections < ban_threshold:
-                    continue
-                # Evitar duplicados y whitelist
-                if ip not in self.blocked_ips_in_attack and ip not in self.config.get('whitelist.ips', []):
-                    if self.blacklist.add_to_blacklist(
-                        ip,
-                        reason=(
-                            f"UDP {service.display_name} ataque masivo: {connections} conexiones ({stats.total_pps} PPS total)"
-                        ),
-                        duration=ban_duration,
-                    ):
-                        self.blocked_ips_in_attack.append(ip)
-                        actions.append(
-                            f"IP {ip} bloqueada por ataque UDP masivo ({connections} conexiones)"
-                        )
+            # Contar cuántas IPs superan el threshold
+            eligible_ips = [ip for ip, conns in stats.top_attackers if conns >= ban_threshold]
+            
+            # SEGURIDAD ADICIONAL: Solo banear si hay MUCHAS IPs atacando
+            # Si solo hay 1-5 IPs, probablemente es tráfico legítimo alto
+            if len(eligible_ips) < 8:
+                self.logger.info(
+                    f"UDP alto ({stats.total_pps} PPS) pero solo {len(eligible_ips)} IPs "
+                    f"superan threshold - probablemente legítimo"
+                )
+            else:
+                for ip, connections in stats.top_attackers:
+                    if connections < ban_threshold:
+                        continue
+                    # Evitar duplicados y whitelist
+                    if ip not in self.blocked_ips_in_attack and ip not in self.config.get('whitelist.ips', []):
+                        if self.blacklist.add_to_blacklist(
+                            ip,
+                            reason=(
+                                f"UDP {service.display_name} ataque masivo: {connections} conexiones ({stats.total_pps} PPS total)"
+                            ),
+                            duration=ban_duration,
+                        ):
+                            self.blocked_ips_in_attack.append(ip)
+                            actions.append(
+                                f"IP {ip} bloqueada por ataque UDP masivo ({connections} conexiones)"
+                            )
         
         # PASO 3: Rate limiting ESCALONADO (solo si ataque confirmado)
         rate_limit_cfg = self.config.get('services.auto_rate_limit', {})
         if service.port and rate_limit_cfg.get('enabled', True) and not state.get('rate_limited') and is_real_attack:
             # Rate limit proporcional a la severidad del ataque
-            base_limit = int(service.rate_limit_pps or rate_limit_cfg.get('limit_pps', 1500))
+            base_limit = int(service.rate_limit_pps or rate_limit_cfg.get('limit_pps', 3000))  # Aumentado a 3000
             
-            # Si el ataque es muy severo, reducir el límite
-            if stats.total_pps > 10000:
-                limit_pps = base_limit // 2  # Límite más restrictivo
+            # Si el ataque es muy severo, reducir el límite GRADUALMENTE
+            if stats.total_pps > 15000:  # Umbral más alto: 15k PPS
+                limit_pps = int(base_limit * 0.6)  # Reducir solo 40% (antes era 50%)
                 self.logger.warning(f"Ataque SEVERO detectado: aplicando rate limit restrictivo ({limit_pps} PPS)")
+            elif stats.total_pps > 8000:  # Ataque moderado
+                limit_pps = int(base_limit * 0.8)  # Reducir solo 20%
+                self.logger.warning(f"Ataque moderado detectado: aplicando rate limit ({limit_pps} PPS)")
             else:
                 limit_pps = base_limit  # Límite normal
             

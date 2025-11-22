@@ -1,0 +1,265 @@
+# Anti-DDoS Configuration - MINECRAFT/PTERODACTYL OPTIMIZED
+# Versión: 2.0 Gaming-Optimized
+# Fecha: 2024-11-21
+# 
+# Esta configuración está específicamente optimizada para:
+# - Servidores Minecraft con Pterodactyl/Wings
+# - 20-60 jugadores simultáneos por servidor
+# - Múltiples servidores en el mismo host
+# - Protección DDoS sin false positives
+
+# General Settings
+general:
+  log_level: INFO
+  log_file: /var/log/antiddos/antiddos.log
+  pid_file: /var/run/antiddos.pid
+  check_interval: 3  # Detección rápida pero sin sobrecarga
+
+# Bandwidth Monitoring - PROTECCIÓN GLOBAL DEL HOST
+bandwidth:
+  enabled: true
+  interface: dr0  # Cambiar según tu interfaz de red
+  threshold_mbps: 200  # Activar solo con ataque DDoS masivo al host
+  threshold_pps: 50000  # Ataques reales superan 50k PPS
+  window_seconds: 10  # Confirmar durante 10 segundos antes de actuar
+  auto_mitigate: true
+
+# Country Filtering (GeoIP) - OPCIONAL
+country_filter:
+  enabled: false  # Deshabilitado por defecto - solo habilitar si hay ataques desde países específicos
+  mode: blacklist
+  blacklist:
+    - CN  # China
+    - RU  # Russia
+    - KP  # North Korea
+  trigger_on_bandwidth: true
+  trigger_threshold_mbps: 150
+
+# Global Blacklist - IPs maliciosas confirmadas
+blacklist:
+  enabled: true
+  file: /etc/antiddos/blacklist.txt
+  auto_save: true
+  auto_blacklist:
+    enabled: true
+    connections_per_second: 80  # 80 conexiones/segundo = ataque claro
+    duration_seconds: 3600  # 1 hora de ban
+
+# DoS Filter - EXTREMADAMENTE PERMISIVO PARA GAMING
+dos_filter:
+  enabled: true
+  syn_flood:
+    enabled: true
+    threshold: 150  # Muy permisivo - solo ataques claros
+    action: drop
+  udp_flood:
+    enabled: true
+    threshold: 150  # Base: límite global = 1500/s (permite múltiples servidores)
+    action: drop
+  icmp_flood:
+    enabled: true
+    threshold: 10
+    action: drop
+  connection_limit:
+    enabled: true
+    max_connections: 150  # Por IP - muy permisivo
+    action: drop
+
+# SSH Protection
+ssh_protection:
+  enabled: true
+  log_file: /var/log/auth.log
+  max_attempts: 2
+  ban_time: 21600  # 6 horas
+  find_time: 600   # 10 minutos
+
+# XCord - Sincronización entre servidores (opcional)
+xcord:
+  enabled: false  # Habilitar solo si tienes múltiples hosts a sincronizar
+  port: 9999
+  encryption_key: "CHANGE_THIS_TO_A_SECURE_KEY_32_CHARS_MINIMUM"
+  peers: []
+  sync_interval: 300
+  auth_token: "CHANGE_THIS_TO_A_SECURE_TOKEN"
+
+# Whitelist - IPs que NUNCA son bloqueadas
+whitelist:
+  enabled: true
+  ips:
+    # TU IP PÚBLICA - IMPORTANTE: Agregar tu IP para evitar auto-bloqueo
+    - 190.57.138.18
+    
+    # IPs de administradores
+    # - 1.2.3.4
+    
+    # IPs de servicios (panel Pterodactyl, etc)
+    # - 5.6.7.8
+    
+  file: /etc/antiddos/whitelist.txt
+
+# ================================================================================
+# CONFIGURACIÓN PRINCIPAL - PROTECCIÓN POR SERVICIO (MINECRAFT)
+# ================================================================================
+services:
+  enabled: true
+  
+  # UMBRALES BASE - Ajustar según tu servidor
+  # Servidor pequeño (10-20 jugadores):  threshold_pps: 2000
+  # Servidor mediano (30-50 jugadores): threshold_pps: 3500
+  # Servidor grande (60-100 jugadores): threshold_pps: 6000
+  default_threshold_mbps: 30
+  default_threshold_pps: 3500
+  
+  status_file: /var/run/antiddos/service_stats.json
+  window_seconds: 10       # Ventana de confirmación
+  recovery_cycles: 5       # Ciclos antes de quitar mitigación
+  default_interface: dr0   # Interfaz de red del host
+  
+  # Rate Limiting - SOLO durante ataque confirmado
+  auto_rate_limit:
+    enabled: true
+    limit_pps: 3000  # DEBE SER ~= threshold_pps para evitar conflictos
+  
+  # UDP Blocking - SOLO para ataques EXTREMOS
+  # ADVERTENCIA: Solo se activa si PPS > 8000 Y hay 8+ IPs atacando
+  auto_udp_block:
+    enabled: true
+    min_pps: 8000                   # Threshold MUY alto
+    ban_connection_threshold: 50    # 50+ conexiones por IP = sospechoso
+    ban_duration_seconds: 1800      # 30 minutos (no permanente)
+  
+  # Blacklist Automático - MUY SELECTIVO
+  # Solo banea IPs con comportamiento CLARAMENTE malicioso
+  auto_blacklist:
+    enabled: true
+    min_connections: 60        # 60+ conexiones simultáneas = ataque claro
+    duration_seconds: 3600     # 1 hora de ban
+  
+  # Auto-discovery de contenedores Docker/Pterodactyl
+  auto_discovery:
+    enabled: true
+    mode: docker  # docker o wings
+    refresh_seconds: 60
+    docker:
+      binary: docker
+      default_interface: dr0
+  
+  # Definiciones manuales (opcional - auto_discovery lo hace automáticamente)
+  definitions: []
+    # Ejemplo si quieres configurar manualmente:
+    # - id: mc-survival
+    #   name: "MC Survival"
+    #   port: 19671
+    #   protocol: udp
+    #   interface: vetha1b2c3
+    #   threshold_mbps: 40
+    #   threshold_pps: 5000
+    #   rate_limit_pps: 4500
+
+# Notifications - Discord
+notifications:
+  enabled: true
+  
+  discord:
+    enabled: true
+    # Webhook para notificaciones (cambiar por tu webhook)
+    webhook_url: "https://discord.com/api/webhooks/YOUR_WEBHOOK_HERE"
+    
+    # Mencionar rol en ataques críticos (opcional)
+    mention_role: ""  # ID del rol, ej: "123456789012345678"
+    
+    # Qué notificar
+    notify_attacks: true       # Alertar cuando se detecten ataques
+    notify_mitigations: true   # Avisar al activar/desactivar mitigación
+    notify_blocks: true        # Avisar cuando se bloquean IPs
+    notify_unblocks: false     # No notificar desbloqueos (mucho spam)
+    
+    # Reporte diario
+    send_daily_report: true
+    report_time: "09:00"
+  
+  # Email (opcional)
+  email:
+    enabled: false
+    smtp_server: smtp.gmail.com
+    smtp_port: 587
+    from_address: alert@yourdomain.com
+    to_addresses:
+      - admin@yourdomain.com
+    username: your_email@gmail.com
+    password: your_password
+  
+  # Webhook genérico (Slack, etc)
+  webhook:
+    enabled: false
+    url: https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+
+# Advanced Settings
+advanced:
+  use_conntrack: true
+  max_conntrack_entries: 100000
+  kernel_hardening: true
+  
+  # Puertos permitidos (bypass DoS filters)
+  allowed_ports:
+    - 3306  # MySQL/MariaDB
+    - 22    # SSH
+    - 80    # HTTP
+    - 443   # HTTPS
+    - 8080  # Wings API
+  
+  # MySQL Protection - Para panel Pterodactyl
+  mysql:
+    port: 3306
+    allow_server_public_ip: true
+    server_public_ip: "190.57.138.18"  # CAMBIAR por tu IP pública
+    max_connections_per_ip: 15
+    rate_limit: "15/s"
+    rate_limit_burst: 50
+    protection_enabled: true
+    trusted_ips:
+      - 190.57.138.18  # IP pública del servidor
+      - 127.0.0.1      # Localhost
+  
+  # Wings API Protection - Para Pterodactyl Wings
+  wings_api:
+    port: 8080
+    protection_enabled: true
+    rate_limit: "30/s"  # Wings necesita más requests
+    rate_limit_burst: 100
+    trusted_ips:
+      - 190.57.138.18  # IP pública del servidor
+      - 127.0.0.1      # Localhost
+  
+  # Strict Limits - SOLO durante ataque global severo
+  strict_limits:
+    enabled: true
+    burst_multiplier: 3
+    syn_limit: 3000   # Permite gaming concurrente durante ataque
+    udp_limit: 10000  # UDP alto para múltiples servidores
+    icmp_limit: 500
+
+# ================================================================================
+# NOTAS IMPORTANTES
+# ================================================================================
+# 
+# 1. WHITELIST: Agregar tu IP pública en whitelist.ips para evitar auto-bloqueo
+# 
+# 2. THRESHOLDS: Ajustar default_threshold_pps según tu servidor:
+#    - 10-20 jugadores: 2000 PPS
+#    - 30-50 jugadores: 3500 PPS
+#    - 60-100 jugadores: 6000 PPS
+# 
+# 3. INTERFACE: Cambiar 'dr0' por tu interfaz de red (ver con: ip link)
+# 
+# 4. DISCORD: Configurar webhook_url para recibir alertas
+# 
+# 5. TESTING: Después de aplicar esta config, ejecutar:
+#    sudo bash /opt/anti-ddos/scripts/test-gaming-config.sh
+# 
+# 6. MONITOREO: Ver logs en tiempo real:
+#    sudo journalctl -u antiddos-monitor -f
+# 
+# 7. AJUSTES: Si hay false positives, aumentar thresholds gradualment e
+# 
+# ================================================================================

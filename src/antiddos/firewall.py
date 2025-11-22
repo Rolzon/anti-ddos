@@ -136,6 +136,19 @@ class FirewallManager:
             if pattern in cmd_str:
                 return True
         
+        # NUEVO: Bloquear agregar reglas DROP directamente a FORWARD
+        # Solo permitimos agregar salto a ANTIDDOS, nada más
+        if 'FORWARD' in cmd_str and '-j DROP' in cmd_str:
+            # Permitir solo eliminar (-D), no agregar (-A, -I)
+            if '-A FORWARD' in cmd_str or '-I FORWARD' in cmd_str:
+                return True
+        
+        # Bloquear agregar reglas ACCEPT a FORWARD (Docker lo gestiona)
+        if 'FORWARD' in cmd_str and '-j ACCEPT' in cmd_str:
+            if ('-A FORWARD' in cmd_str or '-I FORWARD' in cmd_str) and \
+               self.chain_name not in cmd_str:  # Permitir solo saltos a ANTIDDOS
+                return True
+        
         return False
     
     def initialize(self):
@@ -212,11 +225,11 @@ class FirewallManager:
             self.run_command([self.iptables_cmd, '-I', 'INPUT', '1', '-s', network, '-j', 'ACCEPT'])
             self.run_command([self.iptables_cmd, '-I', 'INPUT', '1', '-d', network, '-j', 'ACCEPT'])
         
-        # CRITICAL: Ensure FORWARD chain allows Docker traffic
-        self.run_command([self.iptables_cmd, '-I', 'FORWARD', '1', '-i', 'docker0', '-j', 'ACCEPT'])
-        self.run_command([self.iptables_cmd, '-I', 'FORWARD', '1', '-o', 'docker0', '-j', 'ACCEPT'])
+        # IMPORTANTE: NO tocamos la cadena FORWARD
+        # Docker y Pterodactyl gestionan FORWARD completamente
+        # Nuestro salto a ANTIDDOS en FORWARD es suficiente para filtrado
         
-        self.logger.info("Docker exceptions added with full subnet protection")
+        self.logger.info("Docker exceptions added (INPUT only, FORWARD untouched)")
 
     def _get_port_chain_name(self, port: int) -> str:
         return f"{self.chain_name}_PORT_{port}"
@@ -638,29 +651,26 @@ class FirewallManager:
         self.run_command([self.iptables_cmd, '-X', self.strict_chain])
     
     def block_ip(self, ip: str, reason: str = ""):
-        """Block an IP address for both host and Docker traffic"""
+        """Block an IP address - SOLO en cadena ANTIDDOS"""
         self.logger.info(f"Blocking IP {ip}: {reason}")
         
-        # Block in ANTIDDOS chain (affects both INPUT and FORWARD)
-        # Add to beginning of chain for immediate effect
+        # CRÍTICO: SOLO agregar a cadena ANTIDDOS
+        # El salto a ANTIDDOS desde INPUT y FORWARD hace que esta regla se aplique
+        # NUNCA agregar reglas directamente a FORWARD (contamina la cadena)
         self.run_command([
             self.iptables_cmd, '-I', self.chain_name, '1',
             '-s', ip,
             '-j', 'DROP'
         ])
         
-        # Also explicitly block in FORWARD before Docker rules (belt and suspenders)
-        self.run_command([
-            self.iptables_cmd, '-I', 'FORWARD', '1',
-            '-s', ip,
-            '-j', 'DROP'
-        ])
+        self.logger.debug(f"IP {ip} bloqueada en cadena {self.chain_name} (no en FORWARD)")
     
     def unblock_ip(self, ip: str):
-        """Unblock an IP address from both host and Docker traffic"""
+        """Unblock an IP address - SOLO de cadena ANTIDDOS"""
         self.logger.info(f"Unblocking IP {ip}")
         
         # Remove all rules matching this IP from ANTIDDOS chain
+        removed_count = 0
         while True:
             result = subprocess.run(
                 [self.iptables_cmd, '-D', self.chain_name, '-s', ip, '-j', 'DROP'],
@@ -669,16 +679,14 @@ class FirewallManager:
             )
             if result.returncode != 0:
                 break
+            removed_count += 1
         
-        # Also remove from FORWARD chain
-        while True:
-            result = subprocess.run(
-                [self.iptables_cmd, '-D', 'FORWARD', '-s', ip, '-j', 'DROP'],
-                capture_output=True,
-                check=False
-            )
-            if result.returncode != 0:
-                break
+        if removed_count > 0:
+            self.logger.info(f"Removed {removed_count} block rule(s) for IP {ip}")
+        
+        # IMPORTANTE: NO tocar FORWARD
+        # Si hay reglas residuales en FORWARD (de versión anterior),
+        # el script restore-pterodactyl-firewall.sh las limpiará
     
     def whitelist_ip(self, ip: str):
         """Add IP to whitelist (allow all traffic)"""
@@ -849,7 +857,57 @@ class FirewallManager:
             subprocess.run([self.iptables_cmd, '-F', chain], capture_output=True, check=False)
             subprocess.run([self.iptables_cmd, '-X', chain], capture_output=True, check=False)
         
-        # IMPORTANT: DO NOT touch DOCKER chains, NAT table, or base FORWARD chain
+        # CLEANUP: Eliminar reglas DROP residuales de versiones anteriores
+        # Versiones anteriores agregaban DROP directamente a FORWARD (bug corregido)
+        # Solo eliminamos reglas DROP de IPs individuales, NO tocamos Docker/Pterodactyl
+        self.logger.info("Checking for legacy DROP rules in FORWARD chain...")
+        
+        # Obtener lista de reglas en FORWARD
+        forward_rules_result = subprocess.run(
+            [self.iptables_cmd, '-S', 'FORWARD'],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        
+        removed_legacy_drops = 0
+        if forward_rules_result.returncode == 0:
+            for line in forward_rules_result.stdout.split('\n'):
+                # Detectar reglas DROP de IP individual agregadas por versiones anteriores
+                # Formato: -A FORWARD -s <IP> -j DROP
+                # NO tocar reglas con interfaces docker*, subnets 172.x, o cadenas DOCKER*
+                if ('-A FORWARD' in line and '-s ' in line and '-j DROP' in line and 
+                    'docker' not in line.lower() and 'pterodactyl' not in line.lower() and
+                    'DOCKER' not in line):
+                    
+                    # Extraer la IP
+                    try:
+                        parts = line.split()
+                        if '-s' in parts:
+                            ip_idx = parts.index('-s') + 1
+                            if ip_idx < len(parts):
+                                ip = parts[ip_idx]
+                                # Verificar que es una IP individual (no subnet Docker)
+                                if not ip.startswith('172.') and not ip.startswith('10.') and '/' not in ip:
+                                    # Eliminar esta regla legacy
+                                    result = subprocess.run(
+                                        [self.iptables_cmd, '-D', 'FORWARD', '-s', ip, '-j', 'DROP'],
+                                        capture_output=True,
+                                        check=False
+                                    )
+                                    if result.returncode == 0:
+                                        removed_legacy_drops += 1
+                                        self.logger.debug(f"Removed legacy DROP rule for {ip} from FORWARD")
+                    except (ValueError, IndexError):
+                        pass
+        
+        if removed_legacy_drops > 0:
+            self.logger.warning(
+                f"Removed {removed_legacy_drops} legacy DROP rule(s) from FORWARD chain "
+                f"(from old version that contaminated FORWARD)"
+            )
+        
+        # IMPORTANT: DO NOT touch DOCKER chains, NAT table, or base FORWARD chain rules
         # Docker and Pterodactyl Wings manage these automatically
         
         if cleanup_success:
